@@ -10,7 +10,7 @@ You can set `DEBUG_RATLS=true` to see debug logs.
 from secureai import OpenAI
 
 
-client = OpenAI()
+client = OpenAI(ratls_server_hostnames=["api.openai.com"])
 ```
 
 
