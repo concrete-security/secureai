@@ -20,10 +20,10 @@ client = OpenAI(ratls_server_hostnames=["api.openai.com"])
 from secureai import httpx
 
 
-with httpx.Client(ratls_server_hostnames=["httpbin.org", "google.com"]) as client:
+with httpx.Client(ratls_server_hostnames=["vllm.concrete-security.com"]) as client:
     response = client.get("https://httpbin.org/get")
     print(f"Response status: {response.status_code}")
 
-    response = client.get("https://google.com/get")
+    response = client.get("https://vllm.concrete-security.com/health")
     print(f"Response status: {response.status_code}")
 ```

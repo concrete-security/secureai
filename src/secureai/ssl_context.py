@@ -6,7 +6,7 @@ import logging
 import ssl
 from typing import List
 
-from .ratls import ratls_verify
+from .ratls import RATLSVerificationError, ratls_verify
 
 logger = logging.getLogger("ratls")
 
@@ -43,7 +43,7 @@ def create_ssl_context_with_ratls(ratls_server_hostnames: List[str]) -> ssl.SSLC
             ssl_sock.do_handshake()
 
         if not ratls_verify(ssl_sock, ratls_server_hostnames):
-            raise ssl.SSLError("RATLS verification failed")
+            raise RATLSVerificationError("Verification failed")
 
         return ssl_sock
 
