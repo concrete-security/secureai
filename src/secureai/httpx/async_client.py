@@ -15,7 +15,6 @@ from httpx._types import CertTypes, ProxyTypes
 
 from ..ratls import ratls_verify
 
-
 raise NotImplementedError(
     "Async RATLSClient is not implemented yet. Don't import this module."
 )

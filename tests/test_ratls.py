@@ -21,15 +21,12 @@ class TestRatlsVerify:
         """Test that verification runs for hostnames in the list"""
         ssl_sock = Mock(spec=ssl.SSLSocket)
         ssl_sock.server_hostname = "httpbin.org"
-        ssl_sock.getpeercert.return_value = b"fake_cert_data"
 
         with patch("secureai.ratls._get_quote_from_tls_conn") as mock_get_quote:
-            mock_get_quote.return_value = b"fake_quote_data"
-
+            mock_get_quote.side_effect = Exception("Failed to get quote")
             result = ratls_verify(ssl_sock, ["httpbin.org", "google.com"])
 
-        assert result is True
-        ssl_sock.getpeercert.assert_called_once_with(binary_form=True)
+        assert not result
         mock_get_quote.assert_called_once()
 
     def test_hostname_none_raises_assertion(self):

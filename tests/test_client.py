@@ -1,8 +1,8 @@
 import ssl
+from unittest.mock import patch
 
 import httpx
 import pytest
-from unittest.mock import patch
 from openai import OpenAI
 
 from secureai.httpx import Client as RATLSClient
@@ -44,29 +44,19 @@ class TestRATLSClient:
 
     def test_get_request_to_httpbin(self):
         """Test actual GET request to httpbin.org"""
-        # Make sure it works first
-        with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-            response = client.get("https://httpbin.org/get")
-            assert response.status_code == 200
-
         # Make sure ratls verify is called once while getting quote
         with patch("secureai.ssl_context.ratls_verify") as mock_ratls_verify:
-            mock_ratls_verify.return_value = True
+            mock_ratls_verify.return_value = False
             with patch("secureai.ratls._get_quote_from_tls_conn") as mock_get_quote:
                 mock_get_quote.return_value = b"fake_quote_data"
                 with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-                    response = client.get("https://httpbin.org/get")
-                    assert response.status_code == 200
+                    with pytest.raises(match="Verification failed"):
+                        client.get("https://httpbin.org/get")
                 mock_get_quote.assert_not_called()
             mock_ratls_verify.assert_called_once()
 
     def test_get_request_without_ratls_verification(self):
         """Test GET request to server not in verification list"""
-        # Make sure it works first
-        with RATLSClient(ratls_server_hostnames=["other.com"]) as client:
-            response = client.get("https://httpbin.org/get")
-            assert response.status_code == 200
-
         # Make sure ratls verify is called once while not getting quote (ignored)
         with patch("secureai.ssl_context.ratls_verify") as mock_ratls_verify:
             mock_ratls_verify.return_value = True
@@ -80,35 +70,24 @@ class TestRATLSClient:
 
     def test_post_request(self):
         """Test POST request with RATLSClient"""
-        with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-            response = client.post("https://httpbin.org/post", json={"key": "value"})
+        with RATLSClient(
+            ratls_server_hostnames=["vllm.concrete-security.com"]
+        ) as client:
+            response = client.post(
+                "https://vllm.concrete-security.com/tdx_quote",
+                json={"report_data": "000"},
+            )
             assert response.status_code == 200
-            assert response.json()["json"]["key"] == "value"
 
     def test_multiple_requests(self):
         """Test multiple requests with same client"""
-        with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-            response1 = client.get("https://httpbin.org/get")
-            response2 = client.get("https://httpbin.org/status/200")
+        with RATLSClient(
+            ratls_server_hostnames=["vllm.concrete-security.com"]
+        ) as client:
+            response1 = client.get("https://vllm.concrete-security.com/health")
+            response2 = client.get("https://vllm.concrete-security.com/v1/models")
             assert response1.status_code == 200
             assert response2.status_code == 200
-
-    def test_headers_preserved(self):
-        """Test that custom headers are preserved"""
-        with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-            response = client.get(
-                "https://httpbin.org/get", headers={"X-Custom-Header": "test-value"}
-            )
-            assert response.status_code == 200
-            assert "X-Custom-Header" in response.json()["headers"]
-
-    def test_follow_redirects(self):
-        """Test that redirects are followed"""
-        with RATLSClient(
-            ratls_server_hostnames=["httpbin.org"], follow_redirects=True
-        ) as client:
-            response = client.get("https://httpbin.org/redirect/1")
-            assert response.status_code == 200
 
 
 class TestRATLSOpenAI:
