@@ -4,8 +4,8 @@ httpx.Client with RATLS verification.
 
 import httpx
 
-from ..utils import _get_default_logger
 from ..ssl_context import create_ssl_context_with_ratls
+from ..utils import _get_default_logger
 
 logger = _get_default_logger()
 
