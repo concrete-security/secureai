@@ -4,7 +4,6 @@ RATLS Implementation.
 
 import binascii
 import json
-import logging
 import secrets
 import ssl
 from hashlib import sha256
@@ -14,9 +13,10 @@ from typing import List
 from cryptography import x509
 from cryptography.hazmat.primitives.serialization import Encoding
 
+from .utils import _get_default_logger
 from .verifiers.tdx import TDXVerifier, cert_hash_from_eventlog
 
-logger = logging.getLogger("ratls")
+logger = _get_default_logger()
 
 
 DEFAULT_QUOTE_ENDPOINT = "/tdx_quote"

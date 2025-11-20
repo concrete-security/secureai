@@ -2,13 +2,13 @@
 SSL Context with RATLS verification.
 """
 
-import logging
 import ssl
 from typing import List
 
+from .utils import _get_default_logger
 from .ratls import RATLSVerificationError, ratls_verify
 
-logger = logging.getLogger("ratls")
+logger = _get_default_logger()
 
 
 # We create a custom SSLContext that replaces the wrap_socket method.

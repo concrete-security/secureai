@@ -2,11 +2,13 @@ import logging
 import os
 
 from .openai import OpenAI
+from .utils import _get_default_logger
 
 logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s - RATLS - %(levelname)s - %(message)s"
 )
-logger = logging.getLogger("ratls")
+
+logger = _get_default_logger()
 
 
 # TODO: maybe use RATLS_LOGLEVEL to set level instead of DEBUG/ERROR levels only
