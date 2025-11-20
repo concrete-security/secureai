@@ -18,7 +18,7 @@ class TestRATLSClient:
 
     def test_init_basic(self):
         """Test basic RATLSClient initialization"""
-        client = RATLSClient(ratls_server_hostnames=["httpbin.org"])
+        client = RATLSClient(ratls_server_hostnames=["api.restful-api.dev"])
         assert isinstance(client, httpx.Client)
 
     def test_init_empty_hostnames(self):
@@ -29,17 +29,17 @@ class TestRATLSClient:
     def test_init_with_verify_raises_error(self):
         """Test that passing verify argument raises ValueError"""
         with pytest.raises(ValueError, match="setting verify argument isn't possible"):
-            RATLSClient(ratls_server_hostnames=["httpbin.org"], verify=False)
+            RATLSClient(ratls_server_hostnames=["api.restful-api.dev"], verify=False)
 
     def test_init_with_custom_ssl_context_raises_error(self):
         """Test that passing custom SSL context raises ValueError"""
         ctx = ssl.create_default_context()
         with pytest.raises(ValueError, match="setting verify argument isn't possible"):
-            RATLSClient(ratls_server_hostnames=["httpbin.org"], verify=ctx)
+            RATLSClient(ratls_server_hostnames=["api.restful-api.dev"], verify=ctx)
 
     def test_context_manager(self):
         """Test RATLSClient as context manager"""
-        with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
+        with RATLSClient(ratls_server_hostnames=["api.restful-api.dev"]) as client:
             assert isinstance(client, httpx.Client)
 
     def test_get_request_without_ratls_verification(self):
@@ -50,7 +50,7 @@ class TestRATLSClient:
             with patch("secureai.ratls._get_quote_from_tls_conn") as mock_get_quote:
                 mock_get_quote.return_value = b"fake_quote_data"
                 with RATLSClient(ratls_server_hostnames=["other.com"]) as client:
-                    response = client.get("https://httpbin.org/get")
+                    response = client.get("https://api.restful-api.dev/objects")
                     assert response.status_code == 200
                 mock_get_quote.assert_not_called()
             mock_ratls_verify.assert_called_once()
