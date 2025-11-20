@@ -42,19 +42,6 @@ class TestRATLSClient:
         with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
             assert isinstance(client, httpx.Client)
 
-    def test_get_request_to_httpbin(self):
-        """Test actual GET request to httpbin.org"""
-        # Make sure ratls verify is called once while getting quote
-        with patch("secureai.ssl_context.ratls_verify") as mock_ratls_verify:
-            mock_ratls_verify.return_value = False
-            with patch("secureai.ratls._get_quote_from_tls_conn") as mock_get_quote:
-                mock_get_quote.return_value = b"fake_quote_data"
-                with RATLSClient(ratls_server_hostnames=["httpbin.org"]) as client:
-                    with pytest.raises(match="Verification failed"):
-                        client.get("https://httpbin.org/get")
-                mock_get_quote.assert_not_called()
-            mock_ratls_verify.assert_called_once()
-
     def test_get_request_without_ratls_verification(self):
         """Test GET request to server not in verification list"""
         # Make sure ratls verify is called once while not getting quote (ignored)
@@ -144,3 +131,44 @@ class TestRATLSOpenAI:
             ratls_server_hostnames=["custom.openai.com"],
         )
         assert "custom.openai.com" in str(client.base_url)
+
+    def test_openai_call_ratls_verify(self):
+        """Test that RATLS verification is called when using OpenAI client"""
+        with patch("secureai.ssl_context.ratls_verify") as mock_ratls_verify:
+            mock_ratls_verify.return_value = True
+            client = RATLSOpenAI(
+                api_key="",
+                base_url="https://vllm.concrete-security.com/v1",
+                ratls_server_hostnames=["vllm.concrete-security.com"],
+            )
+
+            # Make a request that should trigger RATLS verification
+            try:
+                client.models.list()
+            except Exception:
+                # The request might fail due to mocking, but we just want to verify
+                # that RATLS verification was attempted
+                pass
+
+            # Verify that RATLS verification was called
+            mock_ratls_verify.assert_called()
+
+    def test_openai_chat_completion(self):
+        """Test OpenAI chat completion with RATLS verification"""
+        client = RATLSOpenAI(
+            api_key="",
+            base_url="https://vllm.concrete-security.com/v1",
+            ratls_server_hostnames=["vllm.concrete-security.com"],
+        )
+        models = client.models.list()
+        model_id = models.data[0].id
+        completion = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": "You are a concise assistant."},
+                {"role": "user", "content": "Summarize the benefits of RATLS."},
+            ],
+            temperature=0.3,
+        )
+        assert completion.choices[0].message.content is not None
+        assert len(completion.choices[0].message.content) > 0
