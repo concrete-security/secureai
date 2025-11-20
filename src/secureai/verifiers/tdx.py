@@ -7,7 +7,6 @@ and utility functions to replay RTMR histories and event logs."""
 
 import binascii
 import json
-import logging
 import os
 import time
 from hashlib import sha384
@@ -16,9 +15,10 @@ from typing import Optional
 
 import dcap_qvl
 
+from ..utils import _get_default_logger
 from .base import BaseVerifier
 
-logger = logging.getLogger("ratls")
+logger = _get_default_logger()
 
 
 CERT_EVENT_NAME = "New TLS Certificate"
