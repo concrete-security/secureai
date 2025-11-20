@@ -1,7 +1,7 @@
 import logging
 import os
 
-from openai import OpenAI
+from .openai import OpenAI
 
 logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s - RATLS - %(levelname)s - %(message)s"
