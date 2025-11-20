@@ -5,8 +5,8 @@ SSL Context with RATLS verification.
 import ssl
 from typing import List
 
-from .utils import _get_default_logger
 from .ratls import RATLSVerificationError, ratls_verify
+from .utils import _get_default_logger
 
 logger = _get_default_logger()
 

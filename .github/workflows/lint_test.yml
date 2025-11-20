@@ -23,10 +23,13 @@ jobs:
           uv sync --group dev
       
       - name: Ruff format check
-        run: uv run ruff format --check .
+        run: make check-format
       
       - name: Ruff lint check
         run: uv run ruff check .
+
+      - name: Ruff check import sorting
+        run: make check-import-order
 
   test:
     name: Run Tests
@@ -43,6 +46,6 @@ jobs:
       - name: Install dependencies
         run: |
           uv sync --group test
-      
+
       - name: Run tests with pytest
-        run: uv run pytest tests/ -v
+        run: make test
