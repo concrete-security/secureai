@@ -5,7 +5,6 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "cryptography>=46.0.3",
     "dcap-qvl>=0.3.2",
     "httpx>=0.28.1",
     "openai>=2.7.2",

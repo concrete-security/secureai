@@ -10,9 +10,6 @@ from hashlib import sha256
 from http.client import HTTPSConnection
 from typing import List
 
-from cryptography import x509
-from cryptography.hazmat.primitives.serialization import Encoding
-
 from .utils import _get_default_logger
 from .verifiers.tdx import TDXVerifier, cert_hash_from_eventlog
 
@@ -142,9 +139,7 @@ def ratls_verify(
         return False
     logger.debug(f"Certificate received for {hostname} ({len(cert_der)} bytes)")
     # Compute cert hash
-    cert = x509.load_der_x509_certificate(cert_der)
-    cert_data = cert.public_bytes(Encoding.PEM)
-    cert_hash = sha256(cert_data).hexdigest()
+    cert_hash = sha256(cert_der).hexdigest()
     logger.debug(f"Certificate hash: {cert_hash}")
 
     # Get event log. It's metadata to replay the RTMRs
