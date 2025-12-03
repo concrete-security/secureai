@@ -9,11 +9,11 @@ import binascii
 import json
 import os
 import time
-from hashlib import sha384
 from pprint import pformat
 from typing import Optional
 
 import dcap_qvl
+from dstack_sdk import EventLog
 
 from ..utils import _get_default_logger
 from .base import BaseVerifier
@@ -76,18 +76,6 @@ class TDXVerifier(BaseVerifier):
             verifier["report"]["TD10"][f"rt_mr{i}"] = value
 
         self._verif_dict.update(verifier)
-
-    def set_rtmrs_from_eventlog(self, event_log: list):
-        """Set RTMR values by replaying the event log.
-
-        Args:
-            event_log: List of event log entries from TDX quote
-        """
-        rtmr_values = replay_event_log(event_log)
-        logger.debug("Replayed RTMR values:")
-        for imr_idx in range(4):
-            logger.debug(f"  RTMR{imr_idx}: {rtmr_values[imr_idx]}")
-        self.set_rtmrs(rtmr_values)
 
     def set_report_data(self, report_data):
         """Set expected report data.
@@ -157,62 +145,7 @@ class TDXVerifier(BaseVerifier):
         return True
 
 
-def rtmr_replay(history: list[str]) -> str:
-    """
-    Replay the RTMR history to calculate the final RTMR value.
-
-    Args:
-        history: List of hex-encoded digest values to extend into the RTMR
-
-    Returns:
-        Hex-encoded final RTMR value (96 hex chars / 48 bytes)
-    """
-    if len(history) == 0:
-        return INIT_MR
-
-    mr = bytes.fromhex(INIT_MR)
-    for content in history:
-        content_bytes = bytes.fromhex(content)
-        # if content is shorter than 48 bytes, pad it with zeros
-        if len(content_bytes) < 48:
-            content_bytes = content_bytes.ljust(48, b"\0")
-        # mr = sha384(concat(mr, content))
-        mr = sha384(mr + content_bytes).digest()
-
-    return mr.hex()
-
-
-def replay_event_log(event_log: list[dict]) -> dict[int, str]:
-    """
-    Replay the event log to calculate final RTMR values.
-
-    Args:
-        event_log: List of event log entries from TDX quote
-
-    Returns:
-        Ordered list of final RTMR values (hex strings) for each register (0-3)
-    """
-    # Group events by IMR index
-    rtmrs = {0: [], 1: [], 2: [], 3: []}
-
-    for event in event_log:
-        idx = event.get("imr", 0)
-        digest = event.get("digest", "")
-        if idx in rtmrs and digest:
-            rtmrs[idx].append(digest)
-        else:
-            logger.debug(f"Event with invalid imr index {idx} or empty digest.")
-            raise ValueError("Invalid event log entry.")
-
-    # Calculate final RTMR for each IMR
-    rtmr_values = []
-    for i in range(4):
-        rtmr_values.append(rtmr_replay(rtmrs[i]))
-
-    return rtmr_values
-
-
-def cert_hash_from_eventlog(event_log: list) -> Optional[str]:
+def cert_hash_from_eventlog(event_log: list[EventLog]) -> Optional[str]:
     """Extract the certificate hash from the event log.
 
     Args:
@@ -221,11 +154,11 @@ def cert_hash_from_eventlog(event_log: list) -> Optional[str]:
     Returns:
         The certificate hash if found, otherwise None.
     """
-    cert_events = []
+    cert_events: list[EventLog] = []
     for event in event_log:
-        if event["event"] == CERT_EVENT_NAME:
+        if event.event == CERT_EVENT_NAME:
             cert_events.append(event)
     if cert_events:
         # Multiple cert events may exist due to certificate renewals, so we take the last one.
-        return binascii.unhexlify(cert_events[-1]["event_payload"]).decode()
+        return binascii.unhexlify(cert_events[-1].event_payload).decode()
     return None
