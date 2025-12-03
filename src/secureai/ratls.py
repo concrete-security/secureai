@@ -2,13 +2,14 @@
 RATLS Implementation.
 """
 
-import binascii
 import json
 import secrets
 import ssl
 from hashlib import sha256
 from http.client import HTTPSConnection
 from typing import List
+
+from dstack_sdk import GetQuoteResponse as QuoteResponse
 
 from .utils import _get_default_logger
 from .verifiers.tdx import TDXVerifier, cert_hash_from_eventlog
@@ -31,7 +32,7 @@ def _get_quote_from_tls_conn(
     host,
     port=443,
     quote_endpoint=DEFAULT_QUOTE_ENDPOINT,
-) -> dict:
+) -> QuoteResponse:
     """Get a quote from the server using an existing TLS connection.
 
     Args:
@@ -42,7 +43,9 @@ def _get_quote_from_tls_conn(
         port: The server port (default is 443).
 
     Returns:
-        dict with quote metadata and quote bytes (hex encoded)
+        QuoteResponse: The quote response from the server.
+    Raises:
+        RATLSVerificationError: If the quote retrieval fails.
     """
 
     if len(report_data) > 64:
@@ -80,7 +83,7 @@ def _get_quote_from_tls_conn(
 
     # Never close the socket, as it's externally managed
     # the socket should still be usable after this function returns
-    return quote_data
+    return QuoteResponse(**quote_data["quote"])
 
 
 # TODO: use a RATLS config which should be a dict of host_config per hostname
@@ -128,8 +131,9 @@ def ratls_verify(
 
     # This report_data is just metadata, so we make sure the server didn't get it wrong
     # The verifier should check this value too in the quote itself
-    assert report_data.hex() == quote_response["quote"]["report_data"], (
-        f"Report data mismatch {report_data.hex()} != {quote_response['quote']['report_data']}"
+
+    assert report_data.hex() == quote_response.report_data, (
+        f"Report data mismatch {report_data.hex()} != {quote_response.report_data}"
     )
 
     # Get server certificate
@@ -143,7 +147,7 @@ def ratls_verify(
     logger.debug(f"Certificate hash: {cert_hash}")
 
     # Get event log. It's metadata to replay the RTMRs
-    event_log = json.loads(quote_response["quote"]["event_log"])
+    event_log = quote_response.decode_event_log()
 
     # Verify that the received cert hash matches the one in the event log.
     # This makes sure the TEE is the one that generated the TLS cert.
@@ -158,12 +162,15 @@ def ratls_verify(
         logger.debug("Certificate hash does NOT match the event log.")
         return False
 
+    # Replay RTMRs
+    replayed_rtmrs = quote_response.replay_rtmrs()
+
     # Verify the quote using TDX verifier
-    quote_bytes = binascii.unhexlify(quote_response["quote"]["quote"])
+    quote_bytes = quote_response.decode_quote()
     verifier = TDXVerifier()
     verifier.set_report_data(report_data.hex())
     verifier.set_collaterals()
-    verifier.set_rtmrs_from_eventlog(event_log)
+    verifier.set_rtmrs([replayed_rtmrs[i] for i in range(4)])
     verifier.set_check_up_to_date()
     if not verifier.verify(quote_bytes):
         logger.debug(f"Quote verification failed for {hostname}")
