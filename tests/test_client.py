@@ -20,7 +20,11 @@ class TestRATLSClient:
     def test_init_basic(self):
         """Test basic RATLSClient initialization"""
         client = RATLSClient(
-            ratls_verifier_per_hostname={"api.restful-api.dev": DstackTDXVerifier()}
+            ratls_verifier_per_hostname={
+                "api.restful-api.dev": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
+            }
         )
         assert isinstance(client, httpx.Client)
 
@@ -34,7 +38,9 @@ class TestRATLSClient:
         with pytest.raises(ValueError, match="setting verify argument isn't possible"):
             RATLSClient(
                 ratls_verifier_per_hostname={
-                    "api.restful-api.dev": DstackTDXVerifier()
+                    "api.restful-api.dev": DstackTDXVerifier(
+                        disable_runtime_verification=True
+                    )
                 },
                 verify=False,
             )
@@ -45,7 +51,9 @@ class TestRATLSClient:
         with pytest.raises(ValueError, match="setting verify argument isn't possible"):
             RATLSClient(
                 ratls_verifier_per_hostname={
-                    "api.restful-api.dev": DstackTDXVerifier()
+                    "api.restful-api.dev": DstackTDXVerifier(
+                        disable_runtime_verification=True
+                    )
                 },
                 verify=ctx,
             )
@@ -53,7 +61,11 @@ class TestRATLSClient:
     def test_context_manager(self):
         """Test RATLSClient as context manager"""
         with RATLSClient(
-            ratls_verifier_per_hostname={"api.restful-api.dev": DstackTDXVerifier()}
+            ratls_verifier_per_hostname={
+                "api.restful-api.dev": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
+            }
         ) as client:
             assert isinstance(client, httpx.Client)
 
@@ -67,7 +79,11 @@ class TestRATLSClient:
             ) as mock_get_quote:
                 mock_get_quote.return_value = b"fake_quote_data"
                 with RATLSClient(
-                    ratls_verifier_per_hostname={"other.com": DstackTDXVerifier()}
+                    ratls_verifier_per_hostname={
+                        "other.com": DstackTDXVerifier(
+                            disable_runtime_verification=True
+                        )
+                    }
                 ) as client:
                     response = client.get("https://api.restful-api.dev/objects")
                     assert response.status_code == 200
@@ -78,7 +94,9 @@ class TestRATLSClient:
         """Test POST request with RATLSClient"""
         with RATLSClient(
             ratls_verifier_per_hostname={
-                "vllm.concrete-security.com": DstackTDXVerifier()
+                "vllm.concrete-security.com": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
             }
         ) as client:
             response = client.post(
@@ -91,7 +109,9 @@ class TestRATLSClient:
         """Test multiple requests with same client"""
         with RATLSClient(
             ratls_verifier_per_hostname={
-                "vllm.concrete-security.com": DstackTDXVerifier()
+                "vllm.concrete-security.com": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
             }
         ) as client:
             response1 = client.get("https://vllm.concrete-security.com/health")
@@ -135,7 +155,9 @@ class TestRATLSOpenAI:
         """Test basic RATLSOpenAI initialization"""
         client = RATLSOpenAI(
             api_key="test-key",
-            ratls_verifier_per_hostname={"api.openai.com": DstackTDXVerifier()},
+            ratls_verifier_per_hostname={
+                "api.openai.com": DstackTDXVerifier(disable_runtime_verification=True)
+            },
         )
         assert isinstance(client, OpenAI)
 
@@ -152,7 +174,11 @@ class TestRATLSOpenAI:
         ):
             RATLSOpenAI(
                 api_key="test-key",
-                ratls_verifier_per_hostname={"api.openai.com": DstackTDXVerifier()},
+                ratls_verifier_per_hostname={
+                    "api.openai.com": DstackTDXVerifier(
+                        disable_runtime_verification=True
+                    )
+                },
                 http_client=custom_client,
             )
 
@@ -160,7 +186,9 @@ class TestRATLSOpenAI:
         """Test that RATLSOpenAI uses RATLSClient"""
         client = RATLSOpenAI(
             api_key="test-key",
-            ratls_verifier_per_hostname={"api.openai.com": DstackTDXVerifier()},
+            ratls_verifier_per_hostname={
+                "api.openai.com": DstackTDXVerifier(disable_runtime_verification=True)
+            },
         )
         assert isinstance(client._client, RATLSClient)
 
@@ -168,7 +196,9 @@ class TestRATLSOpenAI:
         """Test RATLSOpenAI as context manager"""
         with RATLSOpenAI(
             api_key="test-key",
-            ratls_verifier_per_hostname={"api.openai.com": DstackTDXVerifier()},
+            ratls_verifier_per_hostname={
+                "api.openai.com": DstackTDXVerifier(disable_runtime_verification=True)
+            },
         ) as client:
             assert isinstance(client, OpenAI)
 
@@ -176,7 +206,9 @@ class TestRATLSOpenAI:
         """Test that API key is properly set"""
         client = RATLSOpenAI(
             api_key="sk-test-123",
-            ratls_verifier_per_hostname={"api.openai.com": DstackTDXVerifier()},
+            ratls_verifier_per_hostname={
+                "api.openai.com": DstackTDXVerifier(disable_runtime_verification=True)
+            },
         )
         assert client.api_key == "sk-test-123"
 
@@ -185,7 +217,11 @@ class TestRATLSOpenAI:
         client = RATLSOpenAI(
             api_key="test-key",
             base_url="https://custom.openai.com/v1",
-            ratls_verifier_per_hostname={"custom.openai.com": DstackTDXVerifier()},
+            ratls_verifier_per_hostname={
+                "custom.openai.com": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
+            },
         )
         assert "custom.openai.com" in str(client.base_url)
 
@@ -197,7 +233,9 @@ class TestRATLSOpenAI:
                 api_key="",
                 base_url="https://vllm.concrete-security.com/v1",
                 ratls_verifier_per_hostname={
-                    "vllm.concrete-security.com": DstackTDXVerifier()
+                    "vllm.concrete-security.com": DstackTDXVerifier(
+                        disable_runtime_verification=True
+                    )
                 },
             )
 
@@ -218,7 +256,9 @@ class TestRATLSOpenAI:
             api_key="",
             base_url="https://vllm.concrete-security.com/v1",
             ratls_verifier_per_hostname={
-                "vllm.concrete-security.com": DstackTDXVerifier()
+                "vllm.concrete-security.com": DstackTDXVerifier(
+                    disable_runtime_verification=True
+                )
             },
         )
         models = client.models.list()
