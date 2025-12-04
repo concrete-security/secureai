@@ -26,7 +26,7 @@ jobs:
         run: make check-format
       
       - name: Ruff lint check
-        run: uv run ruff check .
+        run: make check-lint
 
       - name: Ruff check import sorting
         run: make check-import-order
@@ -47,5 +47,5 @@ jobs:
         run: |
           uv sync --group test
 
-      - name: Run tests with pytest
-        run: make test
+      - name: Run Pytest/Coverage
+        run: make test-coverage

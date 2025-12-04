@@ -2,6 +2,9 @@
 test:
 	uv run pytest -v
 
+test-coverage:
+	uv run pytest -v --cov=secureai --cov-report=term-missing  --cov-fail-under=95
+
 format:
 	uv run ruff format
 
@@ -24,4 +27,4 @@ qa-all-fix: format lint format-import-order
 
 qa-all: check-format check-lint check-import-order
 
-.PHONY: test format check-format lint check-lint format-import-order check-import-order qa-all-fix qa-all
+.PHONY: test test-coverage format check-format lint check-lint format-import-order check-import-order qa-all-fix qa-all

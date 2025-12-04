@@ -45,3 +45,57 @@ class TestRatlsVerify:
 
         with pytest.raises(AssertionError):
             ratls_verify(ssl_sock, {"httpbin.org": DstackTDXVerifier()})
+
+    def test_empty_verifier_dict_returns_true(self):
+        """Test that empty verifier dict returns True (no verification)"""
+        ssl_sock = Mock(spec=ssl.SSLSocket)
+        ssl_sock.server_hostname = "example.com"
+
+        result = ratls_verify(ssl_sock, {})
+        assert result is True
+
+    def test_none_verifier_dict_returns_true(self):
+        """Test that None verifier dict returns True (no verification)"""
+        ssl_sock = Mock(spec=ssl.SSLSocket)
+        ssl_sock.server_hostname = "example.com"
+
+        result = ratls_verify(ssl_sock, None)
+        assert result is True
+
+    def test_verification_returns_false_when_verifier_fails(self):
+        """Test that verification returns False when verifier.verify returns False"""
+        ssl_sock = Mock(spec=ssl.SSLSocket)
+        ssl_sock.server_hostname = "example.com"
+
+        mock_verifier = Mock()
+        mock_verifier.verify.return_value = False
+
+        result = ratls_verify(ssl_sock, {"example.com": mock_verifier})
+
+        assert result is False
+        mock_verifier.verify.assert_called_once_with(ssl_sock)
+
+    def test_verification_returns_true_when_verifier_succeeds(self):
+        """Test that verification returns True when verifier.verify returns True"""
+        ssl_sock = Mock(spec=ssl.SSLSocket)
+        ssl_sock.server_hostname = "example.com"
+
+        mock_verifier = Mock()
+        mock_verifier.verify.return_value = True
+
+        result = ratls_verify(ssl_sock, {"example.com": mock_verifier})
+
+        assert result is True
+        mock_verifier.verify.assert_called_once_with(ssl_sock)
+
+    def test_verification_returns_false_on_exception(self):
+        """Test that verification returns False when verifier raises exception"""
+        ssl_sock = Mock(spec=ssl.SSLSocket)
+        ssl_sock.server_hostname = "example.com"
+
+        mock_verifier = Mock()
+        mock_verifier.verify.side_effect = Exception("Verification error")
+
+        result = ratls_verify(ssl_sock, {"example.com": mock_verifier})
+
+        assert result is False
