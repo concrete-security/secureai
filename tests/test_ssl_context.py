@@ -11,17 +11,23 @@ from secureai.verifiers.errors import RATLSVerificationError
 class TestCreateVerifyingSSLContext:
     def test_creates_ssl_context(self):
         """Test that function creates an SSL context"""
-        ctx = create_ssl_context_with_ratls({"httpbin.org": DstackTDXVerifier()})
+        ctx = create_ssl_context_with_ratls(
+            {"httpbin.org": DstackTDXVerifier(disable_runtime_verification=True)}
+        )
         assert isinstance(ctx, ssl.SSLContext)
 
     def test_ssl_context_verify_mode(self):
         """Test that SSL context has CERT_REQUIRED verify mode"""
-        ctx = create_ssl_context_with_ratls({"httpbin.org": DstackTDXVerifier()})
+        ctx = create_ssl_context_with_ratls(
+            {"httpbin.org": DstackTDXVerifier(disable_runtime_verification=True)}
+        )
         assert ctx.verify_mode == ssl.CERT_REQUIRED
 
     def test_ssl_context_check_hostname(self):
         """Test that SSL context has check_hostname enabled"""
-        ctx = create_ssl_context_with_ratls({"httpbin.org": DstackTDXVerifier()})
+        ctx = create_ssl_context_with_ratls(
+            {"httpbin.org": DstackTDXVerifier(disable_runtime_verification=True)}
+        )
         assert ctx.check_hostname is True
 
     def test_empty_hostname_list(self):
@@ -33,9 +39,9 @@ class TestCreateVerifyingSSLContext:
         """Test with multiple hostnames"""
         ctx = create_ssl_context_with_ratls(
             {
-                "httpbin.org": DstackTDXVerifier(),
-                "google.com": DstackTDXVerifier(),
-                "example.com": DstackTDXVerifier(),
+                "httpbin.org": DstackTDXVerifier(disable_runtime_verification=True),
+                "google.com": DstackTDXVerifier(disable_runtime_verification=True),
+                "example.com": DstackTDXVerifier(disable_runtime_verification=True),
             }
         )
         assert isinstance(ctx, ssl.SSLContext)
@@ -43,7 +49,9 @@ class TestCreateVerifyingSSLContext:
     def test_wrap_socket_method_replaced(self):
         """Test that wrap_socket method is replaced"""
         original_ctx = ssl.create_default_context()
-        ctx = create_ssl_context_with_ratls({"httpbin.org": DstackTDXVerifier()})
+        ctx = create_ssl_context_with_ratls(
+            {"httpbin.org": DstackTDXVerifier(disable_runtime_verification=True)}
+        )
 
         # The wrap_socket should be different (replaced)
         assert ctx.wrap_socket.__name__ != original_ctx.wrap_socket.__name__
@@ -93,7 +101,11 @@ class TestCreateVerifyingSSLContext:
 
             with patch("secureai.ssl_context.ratls_verify", return_value=False):
                 ctx = create_ssl_context_with_ratls(
-                    {"example.com": DstackTDXVerifier()}
+                    {
+                        "example.com": DstackTDXVerifier(
+                            disable_runtime_verification=True
+                        )
+                    }
                 )
                 mock_sock = Mock()
 

@@ -15,7 +15,10 @@ class TestRatlsVerify:
 
         result = ratls_verify(
             ssl_sock,
-            {"other.com": DstackTDXVerifier(), "another.com": DstackTDXVerifier()},
+            {
+                "other.com": DstackTDXVerifier(disable_runtime_verification=True),
+                "another.com": DstackTDXVerifier(disable_runtime_verification=True),
+            },
         )
 
         assert result is True
@@ -32,7 +35,10 @@ class TestRatlsVerify:
             mock_get_quote.side_effect = Exception("Failed to get quote")
             result = ratls_verify(
                 ssl_sock,
-                {"httpbin.org": DstackTDXVerifier(), "google.com": DstackTDXVerifier()},
+                {
+                    "httpbin.org": DstackTDXVerifier(disable_runtime_verification=True),
+                    "google.com": DstackTDXVerifier(disable_runtime_verification=True),
+                },
             )
 
         assert not result
@@ -44,7 +50,10 @@ class TestRatlsVerify:
         ssl_sock.server_hostname = None
 
         with pytest.raises(AssertionError):
-            ratls_verify(ssl_sock, {"httpbin.org": DstackTDXVerifier()})
+            ratls_verify(
+                ssl_sock,
+                {"httpbin.org": DstackTDXVerifier(disable_runtime_verification=True)},
+            )
 
     def test_empty_verifier_dict_returns_true(self):
         """Test that empty verifier dict returns True (no verification)"""

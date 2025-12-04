@@ -115,6 +115,7 @@ class DstackTDXVerifier(RATLSVerifier):
         docker_compose_file: str | None = None,
         collateral: Optional[dict] = None,
         allowed_tcb_status: list[str] = ["UpToDate"],
+        disable_runtime_verification: bool = False,
     ):
         """Initialize and configure the verifier.
 
@@ -126,22 +127,35 @@ class DstackTDXVerifier(RATLSVerifier):
                 docker_compose_file.
             collateral: dictionary of collateral data. Defaults to using local collateral file.
             allowed_tcb_status: List of accepteble TCB status. Default to ['UpToDate',]
+            disable_runtime_verification: Whether to disable runtime verification. Defaults to False.
+                This is NOT recommended. Use it only if you understand the security implications.
         """
-        # docker_compose_file is only used to create a default app_compose
-        if docker_compose_file is not None and app_compose is not None:
-            raise ValueError(
-                "You can only provide one of docker_compose_file or app_compose"
-            )
-        if docker_compose_file is not None:
-            app_compose = default_app_compose_from_docker_compose(docker_compose_file)
-        self.app_compose = app_compose
-
-        if self.app_compose is None:
+        self._no_rt_verify = disable_runtime_verification
+        if self.is_runtime_verification_disabled():
+            self.app_compose = None
             warnings.warn(
-                "You haven't configured the expected app_compose. "
+                "You have disabled runtime verification. "
                 "RATLS won't verify remote TEE runs a specific application",
                 UserWarning,
             )
+        else:
+            # docker_compose_file is only used to create a default app_compose
+            if docker_compose_file is not None and app_compose is not None:
+                raise ValueError(
+                    "You can only provide one of docker_compose_file or app_compose"
+                )
+            if docker_compose_file is not None:
+                app_compose = default_app_compose_from_docker_compose(
+                    docker_compose_file
+                )
+            self.app_compose = app_compose
+
+            if self.app_compose is None:
+                raise ValueError(
+                    "You haven't configured the expected app_compose. "
+                    "Runtime verification cannot be performed without it. "
+                    "Either provide app_compose or docker_compose_file."
+                )
 
         if not allowed_tcb_status:
             raise ValueError("allowed_tcb_status cannot be empty")
@@ -157,15 +171,23 @@ class DstackTDXVerifier(RATLSVerifier):
                 collateral = json.load(f)
         self.collateral = dcap_qvl.QuoteCollateralV3.from_json(json.dumps(collateral))
 
-        self._verif_dict = {}
-
     def get_app_compose_hash(self) -> str | None:
         """Get the app-compose hash from the configuration.
 
         Returns:
             The compose hash as a hex string, or None if not available.
         """
-        return get_compose_hash(self.app_compose) if self.app_compose else None
+        if self.is_runtime_verification_disabled():
+            return None
+        return get_compose_hash(self.app_compose)
+
+    def is_runtime_verification_disabled(self) -> bool:
+        """Check if runtime verification is disabled.
+
+        Returns:
+            bool: True if runtime verification is disabled, False otherwise.
+        """
+        return self._no_rt_verify
 
     @classmethod
     def get_quote_from_tls_conn(
@@ -272,48 +294,49 @@ class DstackTDXVerifier(RATLSVerifier):
 
         return True
 
-    def verify_app_compose(self, app_compose: dict, event_log: list[EventLog]) -> bool:
+    def verify_app_compose(
+        self, tcb_info_app_compose: dict, event_log: list[EventLog]
+    ) -> bool:
         """Verifies that the expected compose hash matches the one in the event log.
 
         This makes sure the TEE is running the expected application (mainly the docker-compose).
         This verification itself is not sufficient alone. We also need to verify the event log
         matches the expected RTMRs.
 
+        The TCBInfo app_compose is metadata sent by the server to claim what it's running.
+
         Args:
-            app_compose: The application compose configuration.
+            tcb_info_app_compose: The app_compose as returned by the server.
             event_log: The event log entries.
 
         Returns:
             bool: True if verification passes, False otherwise.
         """
+        if self.is_runtime_verification_disabled():
+            return True
+
         expected_app_compose_hash = self.get_app_compose_hash()
-        if expected_app_compose_hash is None:
-            # TODO: should we force appcompose verification?
-            logger.warning(
-                "No expected app compose hash provided in config; "
-                "skipping app compose hash verification."
+        logger.debug(f"App compose hash: {expected_app_compose_hash}")
+
+        # Compare with what the app claims to be running first
+        remote_app_compose = json.loads(tcb_info_app_compose)
+        remote_app_compose_hash = get_compose_hash(app_compose=remote_app_compose)
+        if expected_app_compose_hash != remote_app_compose_hash:
+            logger.debug(
+                "App compose hash does NOT match TCBInfo. AppCompose from TCBInfo:\n"
+                f"{pformat(remote_app_compose)}"
             )
+            return False
+        # Then we compare with what's in the eventlog
+        eventlog_compose_hash = compose_hash_from_eventlog(event_log)
+        if expected_app_compose_hash == eventlog_compose_hash:
+            logger.debug("App compose hash matches the event log.")
         else:
-            logger.debug(f"App compose hash: {expected_app_compose_hash}")
-            # Compare with what the app claims to be running first
-            remote_app_compose = json.loads(app_compose)
-            remote_app_compose_hash = get_compose_hash(app_compose=remote_app_compose)
-            if expected_app_compose_hash != remote_app_compose_hash:
-                logger.debug(
-                    "App compose hash does NOT match TCBInfo. AppCompose from TCBInfo:\n"
-                    f"{pformat(remote_app_compose)}"
-                )
-                return False
-            # Then we compare with what's in the eventlog
-            eventlog_compose_hash = compose_hash_from_eventlog(event_log)
-            if expected_app_compose_hash == eventlog_compose_hash:
-                logger.debug("App compose hash matches the event log.")
-            else:
-                logger.debug(
-                    f"App compose hash does NOT match the event log. event log: {eventlog_compose_hash}, "
-                    f"computed: {expected_app_compose_hash}"
-                )
-                return False
+            logger.debug(
+                f"App compose hash does NOT match the event log. event log: {eventlog_compose_hash}, "
+                f"computed: {expected_app_compose_hash}"
+            )
+            return False
 
         return True
 

@@ -20,9 +20,16 @@ class TestDstackTDXVerifierInit:
 
     def test_init_default(self):
         """Test default initialization without any parameters."""
+        with pytest.raises(
+            ValueError,
+            match="You haven't configured the expected app_compose",
+        ):
+            DstackTDXVerifier()
+
+    def test_init_no_app_compose_with_disable_runtime_verification(self):
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            verifier = DstackTDXVerifier()
+            verifier = DstackTDXVerifier(disable_runtime_verification=True)
 
             # Should warn about no app_compose
             assert len(w) == 1
@@ -81,7 +88,10 @@ class TestDstackTDXVerifierInit:
 
     def test_init_with_valid_tcb_status(self):
         """Test initialization with valid allowed_tcb_status."""
-        verifier = DstackTDXVerifier(allowed_tcb_status=["UpToDate", "OutOfDate"])
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate", "OutOfDate"],
+            disable_runtime_verification=True,
+        )
         assert verifier.allowed_tcb_status == ["UpToDate", "OutOfDate"]
 
     def test_init_with_all_valid_tcb_statuses(self):
@@ -94,23 +104,30 @@ class TestDstackTDXVerifierInit:
             "SWHardeningNeeded",
             "Revoked",
         ]
-        verifier = DstackTDXVerifier(allowed_tcb_status=all_statuses)
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=all_statuses, disable_runtime_verification=True
+        )
         assert verifier.allowed_tcb_status == all_statuses
 
     def test_init_with_invalid_tcb_status_raises_error(self):
         """Test that providing invalid TCB status raises ValueError."""
         with pytest.raises(ValueError, match="TCB status must be one of"):
-            DstackTDXVerifier(allowed_tcb_status=["InvalidStatus"])
+            DstackTDXVerifier(
+                allowed_tcb_status=["InvalidStatus"], disable_runtime_verification=True
+            )
 
     def test_init_with_mixed_valid_and_invalid_tcb_status_raises_error(self):
         """Test that mixing valid and invalid TCB statuses raises ValueError."""
         with pytest.raises(ValueError, match="TCB status must be one of"):
-            DstackTDXVerifier(allowed_tcb_status=["UpToDate", "BadStatus"])
+            DstackTDXVerifier(
+                allowed_tcb_status=["UpToDate", "BadStatus"],
+                disable_runtime_verification=True,
+            )
 
     def test_init_with_empty_tcb_status_raises_error(self):
         """Test that empty allowed_tcb_status list raises ValueError."""
         with pytest.raises(ValueError, match="allowed_tcb_status cannot be empty"):
-            DstackTDXVerifier(allowed_tcb_status=[])
+            DstackTDXVerifier(allowed_tcb_status=[], disable_runtime_verification=True)
 
     def test_init_with_custom_collateral(self):
         """Test initialization with custom collateral."""
@@ -127,7 +144,9 @@ class TestDstackTDXVerifierInit:
 
         with patch("dcap_qvl.QuoteCollateralV3.from_json") as mock_from_json:
             mock_from_json.return_value = "mocked_collateral"
-            verifier = DstackTDXVerifier(collateral=custom_collateral)
+            verifier = DstackTDXVerifier(
+                collateral=custom_collateral, disable_runtime_verification=True
+            )
 
             mock_from_json.assert_called_once()
 
@@ -135,7 +154,7 @@ class TestDstackTDXVerifierInit:
 
     def test_init_loads_default_collateral_when_none_provided(self):
         """Test that default collateral is loaded when none is provided."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         # Collateral should be loaded from the local file
         assert verifier.collateral is not None
 
@@ -145,7 +164,7 @@ class TestDstackTDXVerifierGetAppComposeHash:
 
     def test_get_app_compose_hash_returns_none_when_no_app_compose(self):
         """Test that get_app_compose_hash returns None when app_compose is not set."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         assert verifier.get_app_compose_hash() is None
 
     def test_get_app_compose_hash_returns_hash_when_app_compose_set(self):
@@ -339,7 +358,7 @@ class TestDstackTDXVerifierVerifyCertInEventlog:
 
     def test_returns_false_when_no_certificate(self):
         """Test that function returns False when no certificate is received."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
         mock_ssl_sock.getpeercert.return_value = None
@@ -349,7 +368,7 @@ class TestDstackTDXVerifierVerifyCertInEventlog:
 
     def test_returns_false_when_cert_hash_mismatch(self):
         """Test that function returns False when cert hash doesn't match."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
         mock_ssl_sock.getpeercert.return_value = b"fake_cert_data"
@@ -412,7 +431,9 @@ class TestDstackTDXVerifierVerifyAppCompose:
 
     def test_returns_true_when_no_app_compose_configured(self):
         """Test that verify_app_compose returns True when no app_compose configured."""
-        verifier = DstackTDXVerifier()  # No app_compose
+        verifier = DstackTDXVerifier(
+            disable_runtime_verification=True
+        )  # No app_compose
 
         result = verifier.verify_app_compose("{}", [])
         assert result is True
@@ -447,7 +468,7 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_false_when_get_quote_fails(self):
         """Test that verify returns False when get_quote_from_tls_conn raises exception."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
@@ -461,7 +482,7 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_false_when_cert_verification_fails(self):
         """Test that verify returns False when cert verification fails."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
@@ -480,7 +501,7 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_raises_when_collateral_is_none(self):
         """Test that verify raises RuntimeError when collateral is None."""
-        verifier = DstackTDXVerifier()
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
         verifier.collateral = None  # Force collateral to None
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
@@ -503,7 +524,9 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_false_when_tcb_status_not_allowed(self):
         """Test that verify returns False when TCB status is not in allowed list."""
-        verifier = DstackTDXVerifier(allowed_tcb_status=["UpToDate"])
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+        )
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
@@ -531,7 +554,9 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_false_when_rtmr_mismatch(self):
         """Test that verify returns False when RTMR values don't match."""
-        verifier = DstackTDXVerifier(allowed_tcb_status=["UpToDate"])
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+        )
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
@@ -569,7 +594,9 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_false_when_report_data_mismatch(self):
         """Test that verify returns False when report_data doesn't match."""
-        verifier = DstackTDXVerifier(allowed_tcb_status=["UpToDate"])
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+        )
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
@@ -677,7 +704,9 @@ class TestDstackTDXVerifierVerify:
 
     def test_verify_returns_true_on_success(self):
         """Test that verify returns True when all checks pass."""
-        verifier = DstackTDXVerifier(allowed_tcb_status=["UpToDate"])
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+        )
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
