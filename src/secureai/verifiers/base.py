@@ -1,16 +1,17 @@
+import ssl
 from abc import ABC, abstractmethod
 
 
-class BaseVerifier(ABC):
-    """Base class for all quote verifiers."""
+class RATLSVerifier(ABC):
+    """Base class for all RATLS verifiers."""
 
     @abstractmethod
-    def verify(self, quote: bytes) -> bool:
+    def verify(self, ssl_sock: ssl.SSLSocket) -> bool:
         """
-        Verify a quote.
+        Run RATLS verification on the given SSL socket.
 
         Args:
-            quote: Bytes representing the quote to verify
+            ssl_sock: An SSL socket to run the verification on.
 
         Returns:
             bool: True if verification passes, False otherwise

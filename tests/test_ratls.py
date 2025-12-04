@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from secureai.ratls import ratls_verify
+from secureai.verifiers import DstackTDXVerifier
 
 
 class TestRatlsVerify:
@@ -12,7 +13,10 @@ class TestRatlsVerify:
         ssl_sock = Mock(spec=ssl.SSLSocket)
         ssl_sock.server_hostname = "example.com"
 
-        result = ratls_verify(ssl_sock, ["other.com", "another.com"])
+        result = ratls_verify(
+            ssl_sock,
+            {"other.com": DstackTDXVerifier(), "another.com": DstackTDXVerifier()},
+        )
 
         assert result is True
         ssl_sock.getpeercert.assert_not_called()
@@ -22,9 +26,14 @@ class TestRatlsVerify:
         ssl_sock = Mock(spec=ssl.SSLSocket)
         ssl_sock.server_hostname = "httpbin.org"
 
-        with patch("secureai.ratls._get_quote_from_tls_conn") as mock_get_quote:
+        with patch(
+            "secureai.verifiers.DstackTDXVerifier.get_quote_from_tls_conn"
+        ) as mock_get_quote:
             mock_get_quote.side_effect = Exception("Failed to get quote")
-            result = ratls_verify(ssl_sock, ["httpbin.org", "google.com"])
+            result = ratls_verify(
+                ssl_sock,
+                {"httpbin.org": DstackTDXVerifier(), "google.com": DstackTDXVerifier()},
+            )
 
         assert not result
         mock_get_quote.assert_called_once()
@@ -35,4 +44,4 @@ class TestRatlsVerify:
         ssl_sock.server_hostname = None
 
         with pytest.raises(AssertionError):
-            ratls_verify(ssl_sock, ["httpbin.org"])
+            ratls_verify(ssl_sock, {"httpbin.org": DstackTDXVerifier()})
