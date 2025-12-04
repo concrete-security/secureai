@@ -3,10 +3,11 @@ SSL Context with RATLS verification.
 """
 
 import ssl
-from typing import List
 
-from .ratls import RATLSVerificationError, ratls_verify
+from .ratls import ratls_verify
 from .utils import _get_default_logger
+from .verifiers import RATLSVerifier
+from .verifiers.errors import RATLSVerificationError
 
 logger = _get_default_logger()
 
@@ -17,12 +18,15 @@ logger = _get_default_logger()
 #
 # See https://docs.python.org/3/library/ssl.html#ssl.SSLContext.wrap_socket
 # And https://docs.python.org/3/library/ssl.html#ssl-sockets
-def create_ssl_context_with_ratls(ratls_server_hostnames: List[str]) -> ssl.SSLContext:
+def create_ssl_context_with_ratls(
+    ratls_verifier_per_hostname: dict[str, RATLSVerifier] = None,
+) -> ssl.SSLContext:
     """
     Create an SSL context that do ratls verification as part of the wrap_socket method.
 
     Args:
-        ratls_server_hostnames (List[str]): List of hostnames to perform RATLS verification on.
+        ratls_verifier_per_hostname: Optional dictionary of RATLS verifiers per hostname.
+            Hostnames not in this dict are ignored.
     Returns:
         ssl.SSLContext: SSL context with RATLS verification.
     """
@@ -42,7 +46,7 @@ def create_ssl_context_with_ratls(ratls_server_hostnames: List[str]) -> ssl.SSLC
             logger.debug("Performing TLS handshake for RATLS verification")
             ssl_sock.do_handshake()
 
-        if not ratls_verify(ssl_sock, ratls_server_hostnames):
+        if not ratls_verify(ssl_sock, ratls_verifier_per_hostname):
             raise RATLSVerificationError("Verification failed")
 
         return ssl_sock

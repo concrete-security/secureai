@@ -3,6 +3,7 @@ import os
 
 from .openai import OpenAI
 from .utils import _get_default_logger
+from .verifiers import DstackTDXVerifier
 
 logging.basicConfig(
     level=logging.ERROR, format="%(asctime)s - RATLS - %(levelname)s - %(message)s"
@@ -18,4 +19,4 @@ else:
     logger.setLevel(logging.ERROR)
 
 
-__all__ = ["OpenAI"]
+__all__ = ["OpenAI", "DstackTDXVerifier"]
