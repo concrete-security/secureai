@@ -17,6 +17,7 @@ dev = [
 ]
 test = [
     "pytest",
+    "pytest-cov",
 ]
 
 [build-system]
