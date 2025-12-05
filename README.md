@@ -110,13 +110,55 @@ See the [server implementation reference](https://github.com/concrete-security/u
 
 You can set `DEBUG_RATLS=true` to see debug logs.
 
+### DstackTDXVerifier
+
+`DstackTDXVerifier` is used to verify that a server is running inside a TDX TEE managed by [Dstack](https://github.com/Dstack-TEE/dstack). It verifies the TDX quote and optionally checks that the TEE is running a specific docker-compose configuration.
+
+```python
+from secureai import httpx
+from secureai.verifiers import DstackTDXVerifier
+
+# Option 1: Verify TEE with runtime verification disabled (NOT RECOMMENDED)
+# Only verifies that the server is running in a TEE, but not what application it runs
+verifier = DstackTDXVerifier(disable_runtime_verification=True)
+
+# Option 2: Verify TEE is running a specific docker-compose (RECOMMENDED)
+# This ensures the TEE is running exactly the application you expect
+with open("docker-compose.yml", "r") as f:
+    docker_compose_content = f.read()
+
+verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
+
+# Option 3: Provide a full app_compose configuration
+app_compose = {
+    "docker_compose_file": docker_compose_content,
+    "manifest_version": 2,
+    # ... other configuration options
+}
+verifier = DstackTDXVerifier(app_compose=app_compose)
+
+# Use with httpx client
+with httpx.Client(
+    ratls_verifier_per_hostname={
+        "your-tee-server.com": verifier
+    }
+) as client:
+    response = client.get("https://your-tee-server.com/api")
+```
+
+
 ### OpenAI Client with RATLS
 
 ```python
 from secureai import OpenAI
+from secureai.verifiers import DstackTDXVerifier
 
-# This shouldn't work now as api.openai.com doesn't support RATLS
-client = OpenAI(ratls_server_hostnames=["api.openai.com"])
+with open("you-docker-compose.yml", "r") as f:
+    docker_compose_content = f.read()
+
+verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
+
+client = OpenAI(ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier})
 ```
 
 
@@ -124,9 +166,14 @@ client = OpenAI(ratls_server_hostnames=["api.openai.com"])
 
 ```python
 from secureai import httpx
+from secureai.verifiers import DstackTDXVerifier
 
+with open("you-docker-compose.yml", "r") as f:
+    docker_compose_content = f.read()
 
-with httpx.Client(ratls_server_hostnames=["vllm.concrete-security.com"]) as client:
+verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
+
+with httpx.Client(ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier}) as client:
     # No RATLS as not in the list
     response = client.get("https://httpbin.org/get")
     print(f"Response status: {response.status_code}")
@@ -142,13 +189,19 @@ with httpx.Client(ratls_server_hostnames=["vllm.concrete-security.com"]) as clie
 
 ## Development
 
-SecureAI uses [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and building.
+SecureAI uses [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and building. There is also a Makefile with basic recipes.
 
 ### Running Tests
 
 ```bash
 # Run all tests
 uv run pytest
+```
+
+or
+
+```bash
+make test # or test-coverage
 ```
 
 ### Code Quality
@@ -162,6 +215,12 @@ uv run ruff check
 
 # For import order specifically
 uv run ruff check --select I
+```
+
+or
+
+```bash
+make qa-all # or qa-all-fix
 ```
 
 ### Build
