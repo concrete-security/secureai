@@ -4,8 +4,6 @@
 
 The library transparently extends existing clients - simply specify which hostnames require TEE attestation, and SecureAI handles the verification automatically during the TLS handshake.
 
-**TODO:** SecureAI can't know what are all the expected measurement values, so we should provide a way to set that in the future.
-
 ## Installation
 
 SecureAI uses [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and building.
@@ -84,6 +82,7 @@ Client                                    Server (TEE)
   |  - Check cert hash in event_log matches   |
   |  - Verify event_log by replaying RTMRs    |
   |  - Verify TCB status is UpToDate          |
+  |  - Verify runtime measurements            |
   |                                           |
   | 6. Regular HTTPS requests                 |
   |    (if verification passed)               |
