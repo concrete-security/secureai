@@ -67,10 +67,27 @@ def compose_hash_from_eventlog(event_log: list[EventLog]) -> Optional[str]:
     return None
 
 
+def os_image_hash_from_eventlog(event_log: list[EventLog]) -> Optional[str]:
+    """Extract the OS image hash from the event log.
+
+    Args:
+        event_log: The event log entries.
+
+    Returns:
+        The OS image hash if found, otherwise None.
+    """
+    for event in event_log:
+        if event.event == "os-image-hash":
+            return event.event_payload
+    return None
+
+
 def default_app_compose_from_docker_compose(docker_compose_file: str) -> dict:
     """Create a default app_compose from a docker-compose file."""
     return {
-        "allowed_envs": [],
+        "allowed_envs": [
+            "AUTH_SERVICE_TOKEN",
+        ],
         "docker_compose_file": docker_compose_file,
         "features": ["kms", "tproxy-net"],
         "gateway_enabled": True,
@@ -108,7 +125,6 @@ class DstackTDXVerifier(RATLSVerifier):
         "Revoked",
     ]
 
-    # TODO: It should allow to set what is acceptable for a TEE environment.
     def __init__(
         self,
         app_compose: dict | None = None,
@@ -116,6 +132,8 @@ class DstackTDXVerifier(RATLSVerifier):
         collateral: Optional[dict] = None,
         allowed_tcb_status: list[str] = ["UpToDate"],
         disable_runtime_verification: bool = False,
+        expected_bootchain: Optional[dict] = None,
+        os_image_hash: Optional[str] = None,
     ):
         """Initialize and configure the verifier.
 
@@ -126,13 +144,22 @@ class DstackTDXVerifier(RATLSVerifier):
                 the provided docker-compose file. You cannot set both app_compose and
                 docker_compose_file.
             collateral: dictionary of collateral data. Defaults to using local collateral file.
-            allowed_tcb_status: List of accepteble TCB status. Default to ['UpToDate',]
+            allowed_tcb_status: List of acceptable TCB status. Default to ['UpToDate',]
             disable_runtime_verification: Whether to disable runtime verification. Defaults to False.
                 This is NOT recommended. Use it only if you understand the security implications.
+            expected_bootchain: Bootchain measurements to verify. Should be a dict with
+                keys 'mrtd', 'rtmr0', 'rtmr1', 'rtmr2'. Must be used together with os_image_hash.
+                See docs/dstack-bootchain-verification.md for how to compute these values.
+            os_image_hash: Expected OS image hash (SHA256) to verify. Must be used together
+                with expected_bootchain. See docs/dstack-bootchain-verification.md for how to
+                compute this value.
         """
         self._no_rt_verify = disable_runtime_verification
+        self.expected_bootchain: Optional[dict] = None
+
         if self.is_runtime_verification_disabled():
             self.app_compose = None
+            self.expected_os_image_hash = None
             warnings.warn(
                 "You have disabled runtime verification. "
                 "RATLS won't verify remote TEE runs a specific application",
@@ -155,6 +182,39 @@ class DstackTDXVerifier(RATLSVerifier):
                     "You haven't configured the expected app_compose. "
                     "Runtime verification cannot be performed without it. "
                     "Either provide app_compose or docker_compose_file."
+                )
+
+            # Validate bootchain parameters
+            if expected_bootchain is not None and os_image_hash is not None:
+                # Both provided - validate bootchain keys
+                required_keys = {"mrtd", "rtmr0", "rtmr1", "rtmr2"}
+                if not required_keys.issubset(expected_bootchain.keys()):
+                    missing = required_keys - set(expected_bootchain.keys())
+                    raise ValueError(
+                        f"expected_bootchain is missing required keys: {missing}"
+                    )
+                self.expected_bootchain = expected_bootchain
+                self.expected_os_image_hash = os_image_hash
+                logger.debug("Using provided bootchain measurements and OS image hash")
+                logger.debug(f"Expected MRTD: {self.expected_bootchain['mrtd']}")
+                logger.debug(f"Expected RTMR0: {self.expected_bootchain['rtmr0']}")
+                logger.debug(f"Expected RTMR1: {self.expected_bootchain['rtmr1']}")
+                logger.debug(f"Expected RTMR2: {self.expected_bootchain['rtmr2']}")
+                logger.debug(f"Expected OS image hash: {self.expected_os_image_hash}")
+
+            elif expected_bootchain is not None or os_image_hash is not None:
+                # Only one of them provided - this is invalid
+                raise ValueError(
+                    "expected_bootchain and os_image_hash must be provided together. "
+                    "See docs/dstack-bootchain-verification.md for how to compute these values."
+                )
+
+            else:
+                # Nothing provided
+                raise ValueError(
+                    "You must provide both expected_bootchain and os_image_hash for "
+                    "bootchain verification. This is required for runtime verification. "
+                    "See docs/dstack-bootchain-verification.md for how to compute these values."
                 )
 
         if not allowed_tcb_status:
@@ -340,6 +400,104 @@ class DstackTDXVerifier(RATLSVerifier):
 
         return True
 
+    def verify_os_image_hash(self, event_log: list[EventLog]) -> bool:
+        """Verifies that the OS image hash in the event log matches the expected hash.
+
+        This makes sure the TEE is running the expected OS image.
+        This verification itself is not sufficient alone. We also need to verify the event log
+        matches the expected RTMRs.
+
+        Args:
+            event_log: The event log entries.
+
+        Returns:
+            bool: True if verification passes, False otherwise.
+        """
+        if self.is_runtime_verification_disabled():
+            return True
+
+        # At this point, expected_os_image_hash should be set (enforced in __init__)
+        if self.expected_os_image_hash is None:
+            raise RuntimeError(
+                "OS image hash verification is enabled but expected_os_image_hash is not set. "
+                "This should not happen."
+            )
+
+        eventlog_os_image_hash = os_image_hash_from_eventlog(event_log)
+        logger.debug(f"Expected OS image hash: {self.expected_os_image_hash}")
+        logger.debug(f"OS image hash from event log: {eventlog_os_image_hash}")
+
+        if eventlog_os_image_hash is None:
+            logger.debug("OS image hash not found in event log.")
+            return False
+
+        if self.expected_os_image_hash == eventlog_os_image_hash:
+            logger.debug("OS image hash matches the event log.")
+        else:
+            logger.debug(
+                f"OS image hash does NOT match the event log. "
+                f"Expected: {self.expected_os_image_hash}, "
+                f"Got: {eventlog_os_image_hash}"
+            )
+            return False
+
+        return True
+
+    def verify_bootchain(self, json_report: dict) -> bool:
+        """Verifies that the bootchain measurements (MRTD, RTMR0-2) match expected values.
+
+        This verifies the full boot process from firmware through kernel:
+        - MRTD: Initial TD memory contents and configuration (TDVF/firmware)
+        - RTMR0: Virtual hardware environment
+        - RTMR1: Linux kernel
+        - RTMR2: Kernel command-line parameters and initramfs
+
+        Note: RTMR3 is verified separately via event log replay as it contains
+        application-specific measurements.
+
+        Args:
+            json_report: The JSON report from DCAP verification containing TD10 measurements.
+
+        Returns:
+            bool: True if verification passes, False otherwise.
+        """
+        if self.is_runtime_verification_disabled():
+            return True
+
+        # At this point, expected_bootchain should be set (enforced in __init__)
+        if self.expected_bootchain is None:
+            raise RuntimeError(
+                "Bootchain verification is enabled but expected_bootchain is not set. "
+                "This should not happen."
+            )
+
+        TD_10 = json_report["report"]["TD10"]
+
+        # Verify MRTD
+        quote_mrtd = TD_10["mr_td"]
+        expected_mrtd = self.expected_bootchain["mrtd"]
+        if quote_mrtd != expected_mrtd:
+            logger.debug(
+                f"MRTD mismatch: expected({expected_mrtd}) != quote({quote_mrtd})"
+            )
+            return False
+        logger.debug("MRTD verified!")
+
+        # Verify RTMR0-2 (bootchain measurements)
+        # RTMR3 is verified separately via event log replay
+        for i in range(3):  # RTMR0, RTMR1, RTMR2
+            quote_rtmr = TD_10[f"rt_mr{i}"]
+            expected_rtmr = self.expected_bootchain[f"rtmr{i}"]
+            if quote_rtmr != expected_rtmr:
+                logger.debug(
+                    f"RTMR{i} mismatch: expected({expected_rtmr}) != quote({quote_rtmr})"
+                )
+                return False
+            logger.debug(f"RTMR{i} verified!")
+
+        logger.debug("Bootchain verification passed!")
+        return True
+
     def verify(self, ssl_sock: ssl.SSLSocket) -> bool:
         """Verify a TDX quote.
 
@@ -367,6 +525,8 @@ class DstackTDXVerifier(RATLSVerifier):
             return False
         logger.debug(f"Quote received for {hostname}")
 
+        logger.debug(f"VMConfig: {quote_response.vm_config}")
+
         # Get event log. It's metadata to replay the RTMRs
         event_log = quote_response.decode_event_log()
 
@@ -390,7 +550,13 @@ class DstackTDXVerifier(RATLSVerifier):
             return False
         logger.debug(f"TCB Status verified: {json_report['status']}")
 
+        # Verify bootchain (MRTD, RTMR0-2) against expected values
+        # This must happen before RTMR3 replay verification
+        if not self.verify_bootchain(json_report):
+            return False
+
         # Replay RTMRs and check them in quote
+        # This verifies that the event log correctly produces the RTMRs (including RTMR3)
         replayed_rtmrs = quote_response.replay_rtmrs()
         replayed_rtmrs = [replayed_rtmrs[i] for i in range(self.RTMR_COUNT)]
         TD_10 = json_report["report"]["TD10"]
@@ -402,8 +568,8 @@ class DstackTDXVerifier(RATLSVerifier):
                 )
                 return False
             else:
-                logger.debug(f"RTMR{i} values match!")
-        logger.debug("RTMRs values verified!")
+                logger.debug(f"RTMR{i} replayed values match quote!")
+        logger.debug("RTMRs replay verified!")
 
         # This report_data is just metadata, so we make sure the server didn't get it wrong first
         assert report_data.hex() == quote_response.report_data, (
@@ -419,6 +585,9 @@ class DstackTDXVerifier(RATLSVerifier):
         logger.debug("Report data verified!")
 
         if not self.verify_app_compose(tcb_info.app_compose, event_log):
+            return False
+
+        if not self.verify_os_image_hash(event_log):
             return False
 
         # Never close the socket, as it's externally managed

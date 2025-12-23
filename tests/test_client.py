@@ -119,7 +119,9 @@ class TestRATLSClient:
             assert response1.status_code == 200
             assert response2.status_code == 200
 
-    def test_ratls_verifier_with_app_compose_matching(self):
+    def test_ratls_verifier_with_app_compose_matching(
+        self, test_os_image_hash, test_bootchain
+    ):
         """Test DstackTDXVerifier with app-compose when hashes match"""
         with (
             patch("secureai.verifiers.tdx.get_compose_hash") as mock_get_compose_hash,
@@ -129,7 +131,11 @@ class TestRATLSClient:
         ):
             mock_get_compose_hash.return_value = "matching_hash_value"
             mock_compose_hash_from_eventlog.return_value = "matching_hash_value"
-            verifier = DstackTDXVerifier(docker_compose_file="test")
+            verifier = DstackTDXVerifier(
+                docker_compose_file="test",
+                expected_bootchain=test_bootchain,
+                os_image_hash=test_os_image_hash,
+            )
             with RATLSClient(
                 ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier}
             ) as client:
@@ -139,10 +145,16 @@ class TestRATLSClient:
             assert mock_get_compose_hash.call_count == 2
             mock_compose_hash_from_eventlog.assert_called_once()
 
-    def test_ratls_verifier_with_app_compose_not_matching(self):
+    def test_ratls_verifier_with_app_compose_not_matching(
+        self, test_os_image_hash, test_bootchain
+    ):
         """Test DstackTDXVerifier with app-compose when hashes don't match"""
         # appcompose hashes won't match since docker_compose isn't "test" in the remote machine
-        verifier = DstackTDXVerifier(docker_compose_file="test")
+        verifier = DstackTDXVerifier(
+            docker_compose_file="test",
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
         with RATLSClient(
             ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier}
         ) as client:
