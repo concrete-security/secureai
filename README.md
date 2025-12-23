@@ -174,6 +174,34 @@ with httpx.Client(
 
 See [docs/dstack-bootchain-verification.md](docs/dstack-bootchain-verification.md) for detailed instructions on computing measurements for your CVM deployment.
 
+#### Collateral Fetching
+
+The verifier needs Intel collateral data to verify TDX quotes. By default, collateral is **fetched automatically from Intel servers** on the first verification and cached for subsequent calls within the same verifier instance. However, you can disable caching, or provide your own collateral that you fetched and verified yourself.
+
+```python
+# Default behavior: fetch collateral from Intel and cache it (recommended)
+verifier = DstackTDXVerifier(
+    # ... other options
+)
+
+# Disable caching: fetch fresh collateral on every verification
+verifier = DstackTDXVerifier(
+    cache_collateral=False,
+    # ... other options
+)
+
+# Provide custom collateral
+verifier = DstackTDXVerifier(
+    collateral={
+        "tcb_info": "...",
+        "tcb_info_issuer_chain": "...",
+        "qe_identity": "...",
+        # ... other collateral fields
+    },
+    # ... other options
+)
+```
+
 ### OpenAI Client with RATLS
 
 ```python

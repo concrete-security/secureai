@@ -3,9 +3,9 @@
 This module provides functionality to verify TDX quotes using DCAP QVL library.
 """
 
+import asyncio
 import binascii
 import json
-import os
 import secrets
 import ssl
 import time
@@ -29,8 +29,6 @@ logger = _get_default_logger()
 
 CERT_EVENT_NAME = "New TLS Certificate"
 COMPOSE_HASH_EVENT_NAME = "compose-hash"
-# Downloaded from https://api.trustedservices.intel.com via dcap_qvl
-LOCAL_COLLATERAL_PATH = os.path.join(os.path.dirname(__file__), "collateral.json")
 
 
 def cert_hash_from_eventlog(event_log: list[EventLog]) -> Optional[str]:
@@ -131,6 +129,7 @@ class DstackTDXVerifier(RATLSVerifier):
         self,
         app_compose: dict | None = None,
         collateral: Optional[dict] = None,
+        cache_collateral: bool = True,
         allowed_tcb_status: list[str] = ["UpToDate"],
         disable_runtime_verification: bool = False,
         expected_bootchain: Optional[dict] = None,
@@ -143,7 +142,10 @@ class DstackTDXVerifier(RATLSVerifier):
         Args:
             app_compose: Base application compose configuration. If not provided, uses a
                 default configuration from get_default_app_compose().
-            collateral: dictionary of collateral data. Defaults to using local collateral file.
+            collateral: dictionary of collateral data. If not provided, collateral will be
+                fetched from Intel servers (on first verification only if cache enabled).
+            cache_collateral: Whether to cache fetched collateral for subsequent verify() calls.
+                Defaults to True. Set to False to fetch fresh collateral on every verification.
             allowed_tcb_status: List of acceptable TCB status. Default to ['UpToDate',]
             disable_runtime_verification: Whether to disable runtime verification. Defaults to False.
                 This is NOT recommended. Use it only if you understand the security implications.
@@ -232,10 +234,13 @@ class DstackTDXVerifier(RATLSVerifier):
                 )
         self.allowed_tcb_status = allowed_tcb_status
 
-        if collateral is None:
-            with open(LOCAL_COLLATERAL_PATH, "r") as f:
-                collateral = json.load(f)
-        self.collateral = dcap_qvl.QuoteCollateralV3.from_json(json.dumps(collateral))
+        self._cache_collateral = cache_collateral
+        if collateral is not None:
+            self.collateral = dcap_qvl.QuoteCollateralV3.from_json(
+                json.dumps(collateral)
+            )
+        else:
+            self.collateral = None  # Will be fetched lazily from Intel PCS
 
     def get_app_compose_hash(self) -> str | None:
         """Get the app-compose hash from the configuration.
@@ -254,6 +259,18 @@ class DstackTDXVerifier(RATLSVerifier):
             bool: True if runtime verification is disabled, False otherwise.
         """
         return self._no_rt_verify
+
+    def _fetch_collateral(self, raw_quote: bytes) -> dcap_qvl.QuoteCollateralV3:
+        """Fetch collateral from Intel servers.
+
+        Args:
+            raw_quote: The raw quote bytes (needed to extract info for fetching).
+
+        Returns:
+            QuoteCollateralV3 object
+        """
+
+        return asyncio.run(dcap_qvl.get_collateral_from_pcs(raw_quote))
 
     @classmethod
     def get_quote_from_tls_conn(
@@ -541,9 +558,20 @@ class DstackTDXVerifier(RATLSVerifier):
 
         # Verify the quote using DCAP QVL
         quote_bytes = quote_response.decode_quote()
+
+        # Fetch collateral from Intel servers if not already set
         if self.collateral is None:
-            raise RuntimeError("Collateral are not properly set")
-        report = dcap_qvl.verify(quote_bytes, self.collateral, int(time.time()))
+            logger.debug("Fetching collateral from Intel servers...")
+            collateral = self._fetch_collateral(quote_bytes)
+            if self._cache_collateral:
+                self.collateral = collateral
+                logger.debug("Collateral fetched and cached")
+            else:
+                logger.debug("Collateral fetched (not cached)")
+        else:
+            collateral = self.collateral
+
+        report = dcap_qvl.verify(quote_bytes, collateral, int(time.time()))
         json_report = json.loads(report.to_json())
         logger.debug(f"TDX verification report:\n{pformat(json_report)}")
 

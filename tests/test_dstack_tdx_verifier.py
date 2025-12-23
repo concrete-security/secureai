@@ -52,7 +52,9 @@ class TestDstackTDXVerifierInit:
 
         assert verifier.app_compose is None
         assert verifier.allowed_tcb_status == ["UpToDate"]
-        assert verifier.collateral is not None
+        # Collateral is None by default (lazy loading from Intel servers)
+        assert verifier.collateral is None
+        assert verifier._cache_collateral is True
 
     def test_init_with_bootchain_and_os_image_hash(
         self, test_os_image_hash, test_bootchain
@@ -285,11 +287,23 @@ class TestDstackTDXVerifierInit:
 
         assert verifier.collateral == "mocked_collateral"
 
-    def test_init_loads_default_collateral_when_none_provided(self):
-        """Test that default collateral is loaded when none is provided."""
+    def test_init_collateral_is_none_when_not_provided(self):
+        """Test that collateral is None when not provided (lazy loading)."""
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
-        # Collateral should be loaded from the local file
-        assert verifier.collateral is not None
+        # Collateral should be None for lazy loading from Intel servers
+        assert verifier.collateral is None
+
+    def test_init_cache_collateral_default_true(self):
+        """Test that cache_collateral defaults to True."""
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
+        assert verifier._cache_collateral is True
+
+    def test_init_cache_collateral_can_be_disabled(self):
+        """Test that cache_collateral can be set to False."""
+        verifier = DstackTDXVerifier(
+            disable_runtime_verification=True, cache_collateral=False
+        )
+        assert verifier._cache_collateral is False
 
     def test_init_without_bootchain_raises_error(self):
         """Test that init raises error when bootchain not provided."""
@@ -677,28 +691,120 @@ class TestDstackTDXVerifierVerify:
                 result = verifier.verify(mock_ssl_sock)
                 assert result is False
 
-    def test_verify_raises_when_collateral_is_none(self):
-        """Test that verify raises RuntimeError when collateral is None."""
+    def test_verify_fetches_collateral_when_none(self):
+        """Test that verify fetches collateral from Intel servers when collateral is None."""
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
-        verifier.collateral = None  # Force collateral to None
+        assert verifier.collateral is None  # Collateral is None by default
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
         mock_quote_response = Mock()
         mock_quote_response.decode_event_log.return_value = []
         mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = "00" * 64
         mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = "{}"
 
-        with patch.object(
-            DstackTDXVerifier,
-            "get_quote_from_tls_conn",
-            return_value=(mock_quote_response, mock_tcb_info),
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            '"report_data": "' + "00" * 64 + '"'
+            "}}}"
+        )
+
+        mock_collateral = Mock()
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=b"\x00" * 64
         ):
-            with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with pytest.raises(
-                    RuntimeError, match="Collateral are not properly set"
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    verifier.verify(mock_ssl_sock)
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=mock_collateral
+                    ) as mock_fetch:
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            result = verifier.verify(mock_ssl_sock)
+                            # Should have called _fetch_collateral
+                            mock_fetch.assert_called_once_with(b"fake_quote")
+                            # Should have cached the collateral
+                            assert verifier.collateral == mock_collateral
+                            assert result is True
+
+    def test_verify_does_not_cache_when_cache_collateral_false(self):
+        """Test that verify does not cache collateral when cache_collateral is False."""
+        verifier = DstackTDXVerifier(
+            disable_runtime_verification=True, cache_collateral=False
+        )
+        assert verifier.collateral is None
+        mock_ssl_sock = Mock()
+        mock_ssl_sock.server_hostname = "example.com"
+
+        mock_quote_response = Mock()
+        mock_quote_response.decode_event_log.return_value = []
+        mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = "00" * 64
+        mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = "{}"
+
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            '"report_data": "' + "00" * 64 + '"'
+            "}}}"
+        )
+
+        mock_collateral = Mock()
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=b"\x00" * 64
+        ):
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
+                ):
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=mock_collateral
+                    ) as mock_fetch:
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            result = verifier.verify(mock_ssl_sock)
+                            mock_fetch.assert_called_once()
+                            # Should NOT cache the collateral
+                            assert verifier.collateral is None
+                            assert result is True
 
     def test_verify_returns_false_when_tcb_status_not_allowed(self):
         """Test that verify returns False when TCB status is not in allowed list."""
@@ -724,11 +830,13 @@ class TestDstackTDXVerifierVerify:
             return_value=(mock_quote_response, mock_tcb_info),
         ):
             with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with patch(
-                    "secureai.verifiers.tdx.dcap_qvl.verify", return_value=mock_report
-                ):
-                    result = verifier.verify(mock_ssl_sock)
-                    assert result is False
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
 
     def test_verify_returns_false_when_bootchain_fails(
         self, test_os_image_hash, test_bootchain
@@ -764,11 +872,13 @@ class TestDstackTDXVerifierVerify:
             return_value=(mock_quote_response, mock_tcb_info),
         ):
             with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with patch(
-                    "secureai.verifiers.tdx.dcap_qvl.verify", return_value=mock_report
-                ):
-                    result = verifier.verify(mock_ssl_sock)
-                    assert result is False
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
 
     def test_verify_returns_false_when_rtmr_replay_mismatch(self):
         """Test that verify returns False when RTMR replay values don't match."""
@@ -805,11 +915,13 @@ class TestDstackTDXVerifierVerify:
             return_value=(mock_quote_response, mock_tcb_info),
         ):
             with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with patch(
-                    "secureai.verifiers.tdx.dcap_qvl.verify", return_value=mock_report
-                ):
-                    result = verifier.verify(mock_ssl_sock)
-                    assert result is False
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
 
     def test_verify_returns_false_when_report_data_mismatch(self):
         """Test that verify returns False when report_data doesn't match."""
@@ -855,12 +967,15 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        result = verifier.verify(mock_ssl_sock)
-                        assert result is False
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            result = verifier.verify(mock_ssl_sock)
+                            assert result is False
 
     def test_verify_returns_false_when_app_compose_fails(
         self, test_os_image_hash, test_bootchain
@@ -913,18 +1028,21 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        with patch.object(
-                            verifier, "verify_bootchain", return_value=True
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
                         ):
                             with patch.object(
-                                verifier, "verify_app_compose", return_value=False
+                                verifier, "verify_bootchain", return_value=True
                             ):
-                                result = verifier.verify(mock_ssl_sock)
-                                assert result is False
+                                with patch.object(
+                                    verifier, "verify_app_compose", return_value=False
+                                ):
+                                    result = verifier.verify(mock_ssl_sock)
+                                    assert result is False
 
     def test_verify_returns_false_when_os_image_hash_fails(
         self, test_os_image_hash, test_bootchain
@@ -977,23 +1095,26 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        with patch.object(
-                            verifier, "verify_bootchain", return_value=True
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
                         ):
                             with patch.object(
-                                verifier, "verify_app_compose", return_value=True
+                                verifier, "verify_bootchain", return_value=True
                             ):
                                 with patch.object(
-                                    verifier,
-                                    "verify_os_image_hash",
-                                    return_value=False,
+                                    verifier, "verify_app_compose", return_value=True
                                 ):
-                                    result = verifier.verify(mock_ssl_sock)
-                                    assert result is False
+                                    with patch.object(
+                                        verifier,
+                                        "verify_os_image_hash",
+                                        return_value=False,
+                                    ):
+                                        result = verifier.verify(mock_ssl_sock)
+                                        assert result is False
 
     def test_verify_returns_true_on_success(self):
         """Test that verify returns True when all checks pass."""
@@ -1040,21 +1161,26 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        with patch.object(
-                            verifier, "verify_bootchain", return_value=True
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
                         ):
                             with patch.object(
-                                verifier, "verify_app_compose", return_value=True
+                                verifier, "verify_bootchain", return_value=True
                             ):
                                 with patch.object(
-                                    verifier, "verify_os_image_hash", return_value=True
+                                    verifier, "verify_app_compose", return_value=True
                                 ):
-                                    result = verifier.verify(mock_ssl_sock)
-                                    assert result is True
+                                    with patch.object(
+                                        verifier,
+                                        "verify_os_image_hash",
+                                        return_value=True,
+                                    ):
+                                        result = verifier.verify(mock_ssl_sock)
+                                        assert result is True
 
 
 class TestOsImageHashFromEventlog:
