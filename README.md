@@ -121,16 +121,24 @@ from secureai.verifiers import DstackTDXVerifier
 # Only verifies that the server is running in a TEE, but not the bootchain or what application it runs
 verifier = DstackTDXVerifier(disable_runtime_verification=True)
 
-# Option 2: Full verification with bootchain measurements (RECOMMENDED)
+# Option 2: Full verification with bootchain measurements and custom app_compose (RECOMMENDED)
 # This verifies the full bootchain (firmware, kernel, initramfs), OS image, and application
 with open("docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
+
+# Define your app_compose configuration
+app_compose = {
+    "docker_compose_file": docker_compose_content,
+    "allowed_envs": ["MY_API_KEY", "MY_SECRET"],
+    "features": ["kms", "tproxy-net"],
+    # ... other app_compose settings
+}
 
 # Bootchain measurements depend on hardware configuration (CPU count, memory size, etc.)
 # You must compute these values for your specific deployment
 # See docs/dstack-bootchain-verification.md for instructions
 verifier = DstackTDXVerifier(
-    docker_compose_file=docker_compose_content,  # Verifies the app
+    app_compose=app_compose,
     expected_bootchain={
         "mrtd": "f06dfda6...",   # Initial TD measurement (firmware)
         "rtmr0": "68102e7b...",  # Virtual hardware environment
@@ -138,6 +146,21 @@ verifier = DstackTDXVerifier(
         "rtmr2": "89e73ced...",  # Kernel cmdline + initramfs
     },
     os_image_hash="86b18137..."  # SHA256 of sha256sum.txt
+)
+
+# Option 3: Use default app_compose with overrides
+# If you only need to customize docker_compose_file and/or allowed_envs,
+# you can use the override parameters with the default app_compose
+verifier = DstackTDXVerifier(
+    app_compose_docker_compose_file=docker_compose_content,  # Override docker_compose_file
+    app_compose_allowed_envs=["MY_API_KEY", "MY_SECRET"],    # Override allowed_envs
+    expected_bootchain={
+        "mrtd": "f06dfda6...",
+        "rtmr0": "68102e7b...",
+        "rtmr1": "6e1afb74...",
+        "rtmr2": "89e73ced...",
+    },
+    os_image_hash="86b18137..."
 )
 
 # Use with httpx client
@@ -161,7 +184,7 @@ with open("your-docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
 
 verifier = DstackTDXVerifier(
-    docker_compose_file=docker_compose_content,
+    app_compose_docker_compose_file=docker_compose_content,
     expected_bootchain={
         "mrtd": "...",   # Your computed MRTD
         "rtmr0": "...",  # Your computed RTMR0
@@ -185,7 +208,7 @@ with open("your-docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
 
 verifier = DstackTDXVerifier(
-    docker_compose_file=docker_compose_content,
+    app_compose_docker_compose_file=docker_compose_content,
     expected_bootchain={
         "mrtd": "...",   # Your computed MRTD
         "rtmr0": "...",  # Your computed RTMR0

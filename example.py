@@ -24,7 +24,9 @@ if __name__ == "__main__":
         ratls_verifier_per_hostname={
             "vllm.concrete-security.com": DstackTDXVerifier(
                 # Makes sure the TEE is running this docker-compose
-                docker_compose_file=docker_compose_file,
+                app_compose_docker_compose_file=docker_compose_file,
+                # Allow env vars
+                app_compose_allowed_envs=["AUTH_SERVICE_TOKEN"],
                 # Verify full bootchain (MRTD, RTMR0-2) and OS image hash
                 expected_bootchain=expected_bootchain,
                 os_image_hash=os_image_hash,

@@ -57,7 +57,7 @@ You must provide both `expected_bootchain` and `os_image_hash` when runtime veri
 from secureai.verifiers import DstackTDXVerifier
 
 verifier = DstackTDXVerifier(
-    docker_compose_file=docker_compose_file,
+    app_compose=app_compose,
     expected_bootchain={
         "mrtd": "f06dfda6dce1cf904d4e2bab1dc370634cf95cefa2ceb2de2eee127c9382698090d7a4a13e14c536ec6c9c3c8fa87077",
         "rtmr0": "68102e7b524af310f7b7d426ce75481e36c40f5d513a9009c046e9d37e31551f0134d954b496a3357fd61d03f07ffe96",

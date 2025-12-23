@@ -132,7 +132,7 @@ class TestRATLSClient:
             mock_get_compose_hash.return_value = "matching_hash_value"
             mock_compose_hash_from_eventlog.return_value = "matching_hash_value"
             verifier = DstackTDXVerifier(
-                docker_compose_file="test",
+                app_compose_docker_compose_file="test",
                 expected_bootchain=test_bootchain,
                 os_image_hash=test_os_image_hash,
             )
@@ -151,7 +151,7 @@ class TestRATLSClient:
         """Test DstackTDXVerifier with app-compose when hashes don't match"""
         # appcompose hashes won't match since docker_compose isn't "test" in the remote machine
         verifier = DstackTDXVerifier(
-            docker_compose_file="test",
+            app_compose_docker_compose_file="test",
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )

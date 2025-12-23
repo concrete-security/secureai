@@ -11,7 +11,7 @@ from secureai.verifiers.tdx import (
     DstackTDXVerifier,
     cert_hash_from_eventlog,
     compose_hash_from_eventlog,
-    default_app_compose_from_docker_compose,
+    get_default_app_compose,
     os_image_hash_from_eventlog,
 )
 
@@ -34,7 +34,7 @@ class TestDstackTDXVerifierInit:
         """Test default initialization without any parameters."""
         with pytest.raises(
             ValueError,
-            match="You haven't configured the expected app_compose",
+            match="docker_compose_file must be configured in app_compose",
         ):
             DstackTDXVerifier()
 
@@ -63,7 +63,7 @@ class TestDstackTDXVerifierInit:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             verifier = DstackTDXVerifier(
-                docker_compose_file=docker_compose,
+                app_compose_docker_compose_file=docker_compose,
                 expected_bootchain=test_bootchain,
                 os_image_hash=test_os_image_hash,
             )
@@ -113,7 +113,7 @@ class TestDstackTDXVerifierInit:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             verifier = DstackTDXVerifier(
-                docker_compose_file=docker_compose,
+                app_compose_docker_compose_file=docker_compose,
                 expected_bootchain=test_bootchain,
                 os_image_hash=test_os_image_hash,
             )
@@ -125,19 +125,99 @@ class TestDstackTDXVerifierInit:
         assert verifier.expected_os_image_hash == test_os_image_hash
         assert verifier.expected_bootchain == test_bootchain
 
-    def test_init_with_both_app_compose_and_docker_compose_raises_error(self):
-        """Test that providing both app_compose and docker_compose_file raises ValueError."""
-        app_compose = {"docker_compose_file": "test"}
+    def test_init_with_app_compose_and_docker_compose_override(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that app_compose_docker_compose_file overrides app_compose's docker_compose_file."""
+        app_compose = {"docker_compose_file": "original", "features": ["custom"]}
         docker_compose = "version: '3'"
 
-        with pytest.raises(
-            ValueError,
-            match="You can only provide one of docker_compose_file or app_compose",
-        ):
-            DstackTDXVerifier(
-                app_compose=app_compose,
-                docker_compose_file=docker_compose,
-            )
+        verifier = DstackTDXVerifier(
+            app_compose=app_compose,
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # docker_compose_file should be overridden
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        # Other fields from app_compose should be preserved
+        assert verifier.app_compose["features"] == ["custom"]
+
+    def test_init_with_allowed_envs_override(self, test_os_image_hash, test_bootchain):
+        """Test that app_compose_allowed_envs overrides app_compose's allowed_envs."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        custom_envs = ["MY_VAR", "OTHER_VAR"]
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            app_compose_allowed_envs=custom_envs,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        assert verifier.app_compose["allowed_envs"] == custom_envs
+
+    def test_init_uses_default_app_compose_when_none_provided(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that default app_compose is used when none is provided."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Should use default app_compose settings
+        default = get_default_app_compose()
+        assert verifier.app_compose["features"] == default["features"]
+        assert verifier.app_compose["runner"] == default["runner"]
+        assert verifier.app_compose["gateway_enabled"] == default["gateway_enabled"]
+        # But docker_compose_file should be overridden
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+
+    def test_init_does_not_mutate_original_app_compose(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that original app_compose is not mutated."""
+        original_docker_compose = "original"
+        app_compose = {
+            "docker_compose_file": original_docker_compose,
+            "features": ["kms"],
+        }
+        override_docker_compose = "version: '3'"
+
+        verifier = DstackTDXVerifier(
+            app_compose=app_compose,
+            app_compose_docker_compose_file=override_docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Original should not be mutated
+        assert app_compose["docker_compose_file"] == original_docker_compose
+        # Verifier should have the override
+        assert verifier.app_compose["docker_compose_file"] == override_docker_compose
+
+    def test_init_with_both_overrides(self, test_os_image_hash, test_bootchain):
+        """Test initialization with both allowed_envs and docker_compose_file overrides."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        custom_envs = ["VAR1", "VAR2", "VAR3"]
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            app_compose_allowed_envs=custom_envs,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        assert verifier.app_compose["allowed_envs"] == custom_envs
+        # Other defaults should remain
+        default = get_default_app_compose()
+        assert verifier.app_compose["features"] == default["features"]
 
     def test_init_with_valid_tcb_status(self):
         """Test initialization with valid allowed_tcb_status."""
@@ -219,7 +299,7 @@ class TestDstackTDXVerifierInit:
             ValueError,
             match="You must provide both expected_bootchain and os_image_hash",
         ):
-            DstackTDXVerifier(docker_compose_file=docker_compose)
+            DstackTDXVerifier(app_compose_docker_compose_file=docker_compose)
 
     def test_init_with_only_os_image_hash_raises_error(self, test_os_image_hash):
         """Test that providing only os_image_hash without bootchain raises error."""
@@ -230,7 +310,8 @@ class TestDstackTDXVerifierInit:
             match="expected_bootchain and os_image_hash must be provided together",
         ):
             DstackTDXVerifier(
-                docker_compose_file=docker_compose, os_image_hash=test_os_image_hash
+                app_compose_docker_compose_file=docker_compose,
+                os_image_hash=test_os_image_hash,
             )
 
     def test_init_with_only_bootchain_raises_error(self, test_bootchain):
@@ -242,7 +323,8 @@ class TestDstackTDXVerifierInit:
             match="expected_bootchain and os_image_hash must be provided together",
         ):
             DstackTDXVerifier(
-                docker_compose_file=docker_compose, expected_bootchain=test_bootchain
+                app_compose_docker_compose_file=docker_compose,
+                expected_bootchain=test_bootchain,
             )
 
     def test_init_with_incomplete_bootchain_raises_error(self, test_os_image_hash):
@@ -252,7 +334,7 @@ class TestDstackTDXVerifierInit:
 
         with pytest.raises(ValueError, match="expected_bootchain is missing required"):
             DstackTDXVerifier(
-                docker_compose_file=docker_compose,
+                app_compose_docker_compose_file=docker_compose,
                 expected_bootchain=incomplete_bootchain,
                 os_image_hash=test_os_image_hash,
             )
@@ -275,7 +357,7 @@ class TestDstackTDXVerifierInit:
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
 
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -297,7 +379,7 @@ class TestDstackTDXVerifierGetAppComposeHash:
         """Test that get_app_compose_hash returns a hash when app_compose is set."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -309,16 +391,14 @@ class TestDstackTDXVerifierGetAppComposeHash:
         assert len(hash_result) == 64  # SHA-256 hex encoded
 
 
-class TestDefaultAppComposeFromDockerCompose:
-    """Tests for the default_app_compose_from_docker_compose function."""
+class TestGetDefaultAppCompose:
+    """Tests for the get_default_app_compose function."""
 
     def test_creates_valid_app_compose(self):
         """Test that function creates a valid app_compose structure."""
-        docker_compose = "version: '3'\nservices:\n  app:\n    image: test"
+        result = get_default_app_compose()
 
-        result = default_app_compose_from_docker_compose(docker_compose)
-
-        assert result["docker_compose_file"] == docker_compose
+        assert "docker_compose_file" in result
         assert "allowed_envs" in result
         assert "features" in result
         assert "runner" in result
@@ -326,18 +406,14 @@ class TestDefaultAppComposeFromDockerCompose:
 
     def test_includes_expected_features(self):
         """Test that the default app_compose includes expected features."""
-        docker_compose = "test compose content"
-
-        result = default_app_compose_from_docker_compose(docker_compose)
+        result = get_default_app_compose()
 
         assert "kms" in result["features"]
         assert "tproxy-net" in result["features"]
 
     def test_includes_expected_settings(self):
         """Test that the default app_compose includes expected settings."""
-        docker_compose = "test compose content"
-
-        result = default_app_compose_from_docker_compose(docker_compose)
+        result = get_default_app_compose()
 
         assert result["gateway_enabled"] is True
         assert result["kms_enabled"] is True
@@ -345,6 +421,12 @@ class TestDefaultAppComposeFromDockerCompose:
         assert result["public_logs"] is True
         assert result["public_sysinfo"] is True
         assert result["public_tcbinfo"] is True
+
+    def test_docker_compose_file_is_empty_by_default(self):
+        """Test that docker_compose_file is empty by default."""
+        result = get_default_app_compose()
+
+        assert result["docker_compose_file"] == ""
 
 
 class TestDstackTDXVerifierClassAttributes:
@@ -491,15 +573,15 @@ class TestDstackTDXVerifierVerifyAppCompose:
         """Test that verify_app_compose returns False when hash doesn't match TCBInfo."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
 
         # Create an app_compose JSON that will have a different hash
-        different_app_compose = json.dumps(
-            default_app_compose_from_docker_compose("different_compose_content")
-        )
+        different_default = get_default_app_compose()
+        different_default["docker_compose_file"] = "different_compose_content"
+        different_app_compose = json.dumps(different_default)
         event_log = []
 
         result = verifier.verify_app_compose(different_app_compose, event_log)
@@ -511,7 +593,7 @@ class TestDstackTDXVerifierVerifyAppCompose:
         """Test that verify_app_compose returns False when hash doesn't match event log."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -654,7 +736,7 @@ class TestDstackTDXVerifierVerify:
         """Test that verify returns False when bootchain verification fails."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             allowed_tcb_status=["UpToDate"],
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
@@ -786,7 +868,7 @@ class TestDstackTDXVerifierVerify:
         """Test that verify returns False when app compose verification fails."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             allowed_tcb_status=["UpToDate"],
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
@@ -850,7 +932,7 @@ class TestDstackTDXVerifierVerify:
         """Test that verify returns False when OS image hash verification fails."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             allowed_tcb_status=["UpToDate"],
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
@@ -1018,7 +1100,7 @@ class TestDstackTDXVerifierBootchainVerification:
         """Test that verify_bootchain returns False when MRTD doesn't match."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -1043,7 +1125,7 @@ class TestDstackTDXVerifierBootchainVerification:
         """Test that verify_bootchain returns False when RTMR0 doesn't match."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -1068,7 +1150,7 @@ class TestDstackTDXVerifierBootchainVerification:
         """Test that verify_bootchain returns True when all measurements match."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -1105,7 +1187,7 @@ class TestDstackTDXVerifierOSImageVerification:
         """Test that verify_os_image_hash returns False when hash not in event log."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -1122,7 +1204,7 @@ class TestDstackTDXVerifierOSImageVerification:
         """Test that verify_os_image_hash returns False when hash doesn't match."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )
@@ -1141,7 +1223,7 @@ class TestDstackTDXVerifierOSImageVerification:
         """Test that verify_os_image_hash returns True when hash matches."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose,
+            app_compose_docker_compose_file=docker_compose,
             expected_bootchain=test_bootchain,
             os_image_hash=test_os_image_hash,
         )

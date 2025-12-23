@@ -82,13 +82,15 @@ def os_image_hash_from_eventlog(event_log: list[EventLog]) -> Optional[str]:
     return None
 
 
-def default_app_compose_from_docker_compose(docker_compose_file: str) -> dict:
-    """Create a default app_compose from a docker-compose file."""
+def get_default_app_compose() -> dict:
+    """Get the default app_compose configuration.
+
+    Returns:
+        A dictionary with default app_compose values.
+    """
     return {
-        "allowed_envs": [
-            "AUTH_SERVICE_TOKEN",
-        ],
-        "docker_compose_file": docker_compose_file,
+        "allowed_envs": [],
+        "docker_compose_file": "",
         "features": ["kms", "tproxy-net"],
         "gateway_enabled": True,
         "kms_enabled": True,
@@ -128,21 +130,19 @@ class DstackTDXVerifier(RATLSVerifier):
     def __init__(
         self,
         app_compose: dict | None = None,
-        docker_compose_file: str | None = None,
         collateral: Optional[dict] = None,
         allowed_tcb_status: list[str] = ["UpToDate"],
         disable_runtime_verification: bool = False,
         expected_bootchain: Optional[dict] = None,
         os_image_hash: Optional[str] = None,
+        app_compose_allowed_envs: Optional[list[str]] = None,
+        app_compose_docker_compose_file: Optional[str] = None,
     ):
         """Initialize and configure the verifier.
 
         Args:
-            app_compose: Application compose configuration. Defaults to None.
-            docker_compose_file: docker-compose file content to generate a default app_compose.
-                Defaults to None. Setting this value means using a default app_compose based on
-                the provided docker-compose file. You cannot set both app_compose and
-                docker_compose_file.
+            app_compose: Base application compose configuration. If not provided, uses a
+                default configuration from get_default_app_compose().
             collateral: dictionary of collateral data. Defaults to using local collateral file.
             allowed_tcb_status: List of acceptable TCB status. Default to ['UpToDate',]
             disable_runtime_verification: Whether to disable runtime verification. Defaults to False.
@@ -153,6 +153,8 @@ class DstackTDXVerifier(RATLSVerifier):
             os_image_hash: Expected OS image hash (SHA256) to verify. Must be used together
                 with expected_bootchain. See docs/dstack-bootchain-verification.md for how to
                 compute this value.
+            app_compose_allowed_envs: Override the allowed_envs key in app_compose.
+            app_compose_docker_compose_file: Override the docker_compose_file key in app_compose.
         """
         self._no_rt_verify = disable_runtime_verification
         self.expected_bootchain: Optional[dict] = None
@@ -166,22 +168,26 @@ class DstackTDXVerifier(RATLSVerifier):
                 UserWarning,
             )
         else:
-            # docker_compose_file is only used to create a default app_compose
-            if docker_compose_file is not None and app_compose is not None:
-                raise ValueError(
-                    "You can only provide one of docker_compose_file or app_compose"
-                )
-            if docker_compose_file is not None:
-                app_compose = default_app_compose_from_docker_compose(
-                    docker_compose_file
-                )
+            # Start with the provided app_compose or the default one
+            if app_compose is None:
+                app_compose = get_default_app_compose()
+            else:
+                # Make a copy to avoid mutating the original
+                app_compose = app_compose.copy()
+
+            # Apply overrides
+            if app_compose_allowed_envs is not None:
+                app_compose["allowed_envs"] = app_compose_allowed_envs
+            if app_compose_docker_compose_file is not None:
+                app_compose["docker_compose_file"] = app_compose_docker_compose_file
+
             self.app_compose = app_compose
 
-            if self.app_compose is None:
+            # Verify docker_compose_file is configured
+            if not self.app_compose.get("docker_compose_file"):
                 raise ValueError(
-                    "You haven't configured the expected app_compose. "
-                    "Runtime verification cannot be performed without it. "
-                    "Either provide app_compose or docker_compose_file."
+                    "docker_compose_file must be configured in app_compose. "
+                    "Either provide it in app_compose or use app_compose_docker_compose_file."
                 )
 
             # Validate bootchain parameters
