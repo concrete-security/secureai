@@ -111,30 +111,34 @@ You can set `DEBUG_RATLS=true` to see debug logs.
 
 ### DstackTDXVerifier
 
-`DstackTDXVerifier` is used to verify that a server is running inside a TDX TEE managed by [Dstack](https://github.com/Dstack-TEE/dstack). It verifies the TDX quote and optionally checks that the TEE is running a specific docker-compose configuration.
+`DstackTDXVerifier` is used to verify that a server is running inside a TDX TEE managed by [Dstack](https://github.com/Dstack-TEE/dstack). It verifies the full bootchain (MRTD, RTMR0-2), event log integrity, and application configuration.
 
 ```python
 from secureai import httpx
 from secureai.verifiers import DstackTDXVerifier
 
 # Option 1: Verify TEE with runtime verification disabled (NOT RECOMMENDED)
-# Only verifies that the server is running in a TEE, but not what application it runs
+# Only verifies that the server is running in a TEE, but not the bootchain or what application it runs
 verifier = DstackTDXVerifier(disable_runtime_verification=True)
 
-# Option 2: Verify TEE is running a specific docker-compose (RECOMMENDED)
-# This ensures the TEE is running exactly the application you expect
+# Option 2: Full verification with bootchain measurements (RECOMMENDED)
+# This verifies the full bootchain (firmware, kernel, initramfs), OS image, and application
 with open("docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
 
-verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
-
-# Option 3: Provide a full app_compose configuration
-app_compose = {
-    "docker_compose_file": docker_compose_content,
-    "manifest_version": 2,
-    # ... other configuration options
-}
-verifier = DstackTDXVerifier(app_compose=app_compose)
+# Bootchain measurements depend on hardware configuration (CPU count, memory size, etc.)
+# You must compute these values for your specific deployment
+# See docs/dstack-bootchain-verification.md for instructions
+verifier = DstackTDXVerifier(
+    docker_compose_file=docker_compose_content,  # Verifies the app
+    expected_bootchain={
+        "mrtd": "f06dfda6...",   # Initial TD measurement (firmware)
+        "rtmr0": "68102e7b...",  # Virtual hardware environment
+        "rtmr1": "6e1afb74...",  # Linux kernel
+        "rtmr2": "89e73ced...",  # Kernel cmdline + initramfs
+    },
+    os_image_hash="86b18137..."  # SHA256 of sha256sum.txt
+)
 
 # Use with httpx client
 with httpx.Client(
@@ -145,6 +149,7 @@ with httpx.Client(
     response = client.get("https://your-tee-server.com/api")
 ```
 
+See [docs/dstack-bootchain-verification.md](docs/dstack-bootchain-verification.md) for detailed instructions on computing measurements for your CVM deployment.
 
 ### OpenAI Client with RATLS
 
@@ -152,10 +157,19 @@ with httpx.Client(
 from secureai import OpenAI
 from secureai.verifiers import DstackTDXVerifier
 
-with open("you-docker-compose.yml", "r") as f:
+with open("your-docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
 
-verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
+verifier = DstackTDXVerifier(
+    docker_compose_file=docker_compose_content,
+    expected_bootchain={
+        "mrtd": "...",   # Your computed MRTD
+        "rtmr0": "...",  # Your computed RTMR0
+        "rtmr1": "...",  # Your computed RTMR1
+        "rtmr2": "...",  # Your computed RTMR2
+    },
+    os_image_hash="..."  # Your computed OS image hash
+)
 
 client = OpenAI(ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier})
 ```
@@ -167,20 +181,29 @@ client = OpenAI(ratls_verifier_per_hostname={"vllm.concrete-security.com": verif
 from secureai import httpx
 from secureai.verifiers import DstackTDXVerifier
 
-with open("you-docker-compose.yml", "r") as f:
+with open("your-docker-compose.yml", "r") as f:
     docker_compose_content = f.read()
 
-verifier = DstackTDXVerifier(docker_compose_file=docker_compose_content)
+verifier = DstackTDXVerifier(
+    docker_compose_file=docker_compose_content,
+    expected_bootchain={
+        "mrtd": "...",   # Your computed MRTD
+        "rtmr0": "...",  # Your computed RTMR0
+        "rtmr1": "...",  # Your computed RTMR1
+        "rtmr2": "...",  # Your computed RTMR2
+    },
+    os_image_hash="..."  # Your computed OS image hash
+)
 
 with httpx.Client(ratls_verifier_per_hostname={"vllm.concrete-security.com": verifier}) as client:
     # No RATLS as not in the list
     response = client.get("https://httpbin.org/get")
     print(f"Response status: {response.status_code}")
-    
+
     # Uses RATLS
     response = client.get("https://vllm.concrete-security.com/health")
     print(f"Response status: {response.status_code}")
-    
+
     # This shouldn't trigger another verification as the connection is still open
     response = client.get("https://vllm.concrete-security.com/v1/models")
     print(f"Response status: {response.status_code}")
