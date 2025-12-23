@@ -1,6 +1,6 @@
 services:
   vllm:
-    image: vllm/vllm-openai:latest
+    image: vllm/vllm-openai:v0.13.0
     container_name: vllm
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
@@ -19,6 +19,8 @@ services:
       --max-model-len 131072
       --max-num-seqs 8
       --reasoning-parser openai_gptoss
+      --enable-auto-tool-choice
+      --tool-call-parser openai
       --async-scheduling
       --allowed-origins []
     restart: unless-stopped
@@ -31,7 +33,7 @@ services:
 
   # Combined Nginx reverse proxy and Certificate Manager
   nginx-cert-manager:
-    image: ghcr.io/concrete-security/cert-manager@sha256:5351fee71ab903712adb7ad6255b809486549678bb53ff03c875692c5d040e0c
+    image: ghcr.io/concrete-security/cert-manager@sha256:41670300c1027c6ae1920ff5fe3e78239b097b83c3288062ab9a648005fc1c05
     container_name: nginx-cert-manager
     ports:
       - "80:80"
@@ -53,6 +55,22 @@ services:
     networks:
       - vllm
       - attestation
+      - auth
+    restart: unless-stopped
+
+  # Auth service for protected endpoints
+  auth-service:
+    image: ghcr.io/concrete-security/auth-service@sha256:29a10d75e44bdda06418afe9fa3a75ed7393e50fd1babc661aa25d9d1ad27160
+    container_name: auth-service
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8081
+      - AUTH_SERVICE_TOKEN=${AUTH_SERVICE_TOKEN}
+      - LOG_LEVEL=INFO
+    expose:
+      - "8081"
+    networks:
+      - auth
     restart: unless-stopped
 
   # TDX Attestation service
@@ -80,6 +98,8 @@ networks:
   vllm:
     driver: bridge
   attestation:
+    driver: bridge
+  auth:
     driver: bridge
 
 volumes:
