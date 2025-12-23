@@ -20,6 +20,20 @@ test = [
     "pytest-cov",
 ]
 
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C4",  # flake8-comprehensions
+    "ARG001", # unused arguments in functions
+]
+
+ignore = [
+    "E501",  # line too long, handled by black
+]
+
 [build-system]
 requires = ["uv_build>=0.8.20,<0.9.0"]
 build-backend = "uv_build"

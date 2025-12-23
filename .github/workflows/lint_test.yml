@@ -28,9 +28,6 @@ jobs:
       - name: Ruff lint check
         run: make check-lint
 
-      - name: Ruff check import sorting
-        run: make check-import-order
-
   test:
     name: Run Tests
     runs-on: ubuntu-latest
