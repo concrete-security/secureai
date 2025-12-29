@@ -260,6 +260,34 @@ with httpx.Client(ratls_verifier_per_hostname={"vllm.concrete-security.com": ver
     print(f"Response status: {response.status_code}")
 ```
 
+## Provenance Verification
+
+SecureAI also provides SLSA provenance verification for container images. This complements RATLS by verifying the **software supply chain** before verifying the **runtime environment**.
+
+- **Provenance Verification**: Ensures images came from trusted sources and build pipelines
+- **RATLS Verification**: Ensures the runtime environment is a genuine TEE running expected code
+
+```python
+from secureai.provenance import DockerComposeProvenanceVerifier, build_default_policy
+
+# Read docker-compose
+with open("docker-compose.yml", "r") as f:
+    docker_compose_content = f.read()
+
+# Verify provenance of images before deployment
+provenance_verifier = DockerComposeProvenanceVerifier(
+    docker_compose=docker_compose_content,
+    service_policies={
+        "vllm": build_default_policy("my-org/vllm-service"),
+        "auth": build_default_policy("my-org/auth-service"),
+    },
+    ignore=["redis", "postgres"],  # Skip third-party images
+)
+provenance_verifier.verify()  # Raises ProvenanceVerificationError on failure
+```
+
+Set `DEBUG_PROVENANCE=true` for debug logs. See [docs/provenance-verification.md](docs/provenance-verification.md) for detailed usage, advanced policies, and integration examples.
+
 ## Development
 
 SecureAI uses [uv](https://docs.astral.sh/uv/getting-started/installation/) for dependency management and building. There is also a Makefile with basic recipes.

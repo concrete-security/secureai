@@ -6,7 +6,7 @@ from .utils import _get_default_logger
 from .verifiers import DstackTDXVerifier
 
 logging.basicConfig(
-    level=logging.ERROR, format="%(asctime)s - RATLS - %(levelname)s - %(message)s"
+    level=logging.ERROR, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 logger = _get_default_logger()

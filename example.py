@@ -1,13 +1,49 @@
 import os
 
 os.environ["DEBUG_RATLS"] = "true"
+os.environ["DEBUG_PROVENANCE"] = "true"
 
 from secureai import httpx
+from secureai.provenance import build_default_policy, verify_docker_compose_provenance
 from secureai.verifiers import DstackTDXVerifier
+
+EXPECTED_REPO = "concrete-security/umbra"
+EXPECTED_COMMIT_SHA = "289024336e699c1936d36516936841532db75c11"
+WORKFLOW_NAME_AUTH_SERVICE = "Auth Service"
+WORKFLOW_NAME_CERT_MANAGER = "Certificate Manager"
+WORKFLOW_NAME_ATTESTATION_SERVICE = "Attestation Service"
 
 if __name__ == "__main__":
     with open("example_docker_compose.yml", "r") as f:
         docker_compose_file = f.read()
+
+    # Verify the provenance of the docker-compose service images
+    try:
+        verify_docker_compose_provenance(
+            docker_compose_file,
+            service_policies={
+                "auth-service": build_default_policy(
+                    EXPECTED_REPO,
+                    expected_commit=EXPECTED_COMMIT_SHA,
+                    expected_workflow_name=WORKFLOW_NAME_AUTH_SERVICE,
+                ),
+                "nginx-cert-manager": build_default_policy(
+                    EXPECTED_REPO,
+                    expected_commit=EXPECTED_COMMIT_SHA,
+                    expected_workflow_name=WORKFLOW_NAME_CERT_MANAGER,
+                ),
+                "attestation-service": build_default_policy(
+                    EXPECTED_REPO,
+                    expected_commit=EXPECTED_COMMIT_SHA,
+                    expected_workflow_name=WORKFLOW_NAME_ATTESTATION_SERVICE,
+                ),
+            },
+            ignore=["vllm"],
+        )
+        print("Docker-compose provenance verification succeeded.")
+    except Exception as e:
+        print(f"Docker-compose provenance verification failed: {e}")
+        exit(1)
 
     # Bootchain measurements depend on hardware configuration (CPU count, memory size, etc.)
     # These values must be computed for your specific deployment

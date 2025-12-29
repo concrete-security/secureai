@@ -9,6 +9,9 @@ dependencies = [
     "dstack-sdk>=0.5.3",
     "httpx>=0.28.1",
     "openai>=2.7.2",
+    "oras>=0.2.38",
+    "pyyaml>=6.0",
+    "sigstore>=4.1.0",
 ]
 
 [dependency-groups]
