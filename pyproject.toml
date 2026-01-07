@@ -37,3 +37,8 @@ ignore = [
 [build-system]
 requires = ["uv_build>=0.8.20,<0.9.0"]
 build-backend = "uv_build"
+
+
+[project.urls]
+Repository = "https://github.com/concrete-security/secureai.git"
+Issues = "https://github.com/concrete-security/secureai/issues"
