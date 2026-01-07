@@ -89,6 +89,15 @@ Client                                    Server (TEE)
   |<=========================================>|
 ```
 
+## Provenance Verification
+
+For complete security, consider verifying the **software supply chain** before verifying the **runtime environment**. We recommend using [docker-slsa](https://pypi.org/project/docker-slsa/) to verify SLSA provenance of container images before deployment:
+
+- **Provenance Verification** (docker-slsa): Ensures images came from trusted sources and build pipelines
+- **RATLS Verification** (secureai): Ensures the runtime environment is a genuine TEE running expected code
+
+See the [docker-slsa documentation](https://pypi.org/project/docker-slsa/) for usage details.
+
 ## Server Requirements
 
 For a server to support RATLS verification with SecureAI, it must:
