@@ -45,4 +45,4 @@ jobs:
           uv sync --group test
 
       - name: Run Pytest/Coverage
-        run: make test-coverage
+        run: SHOW_LOGS=true make test-coverage

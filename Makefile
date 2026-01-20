@@ -1,9 +1,22 @@
 
+PYTEST_BASE_CMD = uv run pytest -v
+PYTEST_DEBUG_PREFIX = DEBUG_RATLS=true
+PYTEST_LOG_SUFFIX = -o log_cli=true
+PYTEST_COV_OPTIONS = --cov=secureai --cov-report=term-missing  --cov-fail-under=95
+
 test:
-	uv run pytest -v
+ifdef SHOW_LOGS
+	$(PYTEST_DEBUG_PREFIX) $(PYTEST_BASE_CMD) $(PYTEST_LOG_SUFFIX)
+else
+	$(PYTEST_BASE_CMD)
+endif
 
 test-coverage:
-	uv run pytest -v --cov=secureai --cov-report=term-missing  --cov-fail-under=95
+ifdef SHOW_LOGS
+	$(PYTEST_DEBUG_PREFIX) $(PYTEST_BASE_CMD) $(PYTEST_COV_OPTIONS) $(PYTEST_LOG_SUFFIX)
+else
+	$(PYTEST_BASE_CMD) $(PYTEST_COV_OPTIONS)
+endif
 
 format:
 	uv run ruff format
