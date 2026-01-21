@@ -1,6 +1,6 @@
 [project]
 name = "secureai"
-version = "0.2.0"
+version = "0.3.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -18,6 +18,20 @@ dev = [
 test = [
     "pytest",
     "pytest-cov",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "C4",  # flake8-comprehensions
+    "ARG001", # unused arguments in functions
+]
+
+ignore = [
+    "E501",  # line too long, handled by black
 ]
 
 [build-system]

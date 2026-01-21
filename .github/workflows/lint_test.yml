@@ -28,9 +28,6 @@ jobs:
       - name: Ruff lint check
         run: make check-lint
 
-      - name: Ruff check import sorting
-        run: make check-import-order
-
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -48,4 +45,4 @@ jobs:
           uv sync --group test
 
       - name: Run Pytest/Coverage
-        run: make test-coverage
+        run: SHOW_LOGS=true make test-coverage
