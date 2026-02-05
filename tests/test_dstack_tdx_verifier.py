@@ -11,8 +11,20 @@ from secureai.verifiers.tdx import (
     DstackTDXVerifier,
     cert_hash_from_eventlog,
     compose_hash_from_eventlog,
-    default_app_compose_from_docker_compose,
+    get_default_app_compose,
+    os_image_hash_from_eventlog,
 )
+
+
+def _create_event_log(event: str, event_payload: str) -> EventLog:
+    """Helper to create EventLog with required fields."""
+    return EventLog(
+        imr=0,
+        event_type=0,
+        digest="0" * 64,
+        event=event,
+        event_payload=event_payload,
+    )
 
 
 class TestDstackTDXVerifierInit:
@@ -22,7 +34,7 @@ class TestDstackTDXVerifierInit:
         """Test default initialization without any parameters."""
         with pytest.raises(
             ValueError,
-            match="You haven't configured the expected app_compose",
+            match="docker_compose_file must be configured in app_compose",
         ):
             DstackTDXVerifier()
 
@@ -40,10 +52,40 @@ class TestDstackTDXVerifierInit:
 
         assert verifier.app_compose is None
         assert verifier.allowed_tcb_status == ["UpToDate"]
-        assert verifier.collateral is not None
+        # Collateral is None by default (lazy loading from Intel servers)
+        assert verifier.collateral is None
+        assert verifier._cache_collateral is True
 
-    def test_init_with_app_compose(self):
-        """Test initialization with app_compose."""
+    def test_init_with_bootchain_and_os_image_hash(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test initialization with expected_bootchain and os_image_hash."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            verifier = DstackTDXVerifier(
+                app_compose_docker_compose_file=docker_compose,
+                expected_bootchain=test_bootchain,
+                os_image_hash=test_os_image_hash,
+            )
+
+            # Should not warn when docker_compose_file is provided
+            assert len(w) == 0
+
+        assert verifier.app_compose is not None
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        assert verifier.expected_os_image_hash == test_os_image_hash
+        assert verifier.expected_bootchain is not None
+        assert verifier.expected_bootchain["mrtd"] == test_bootchain["mrtd"]
+        assert verifier.expected_bootchain["rtmr0"] == test_bootchain["rtmr0"]
+        assert verifier.expected_bootchain["rtmr1"] == test_bootchain["rtmr1"]
+        assert verifier.expected_bootchain["rtmr2"] == test_bootchain["rtmr2"]
+
+    def test_init_with_app_compose_and_bootchain(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test initialization with app_compose, expected_bootchain, and os_image_hash."""
         app_compose = {
             "docker_compose_file": "version: '3'\nservices:\n  app:\n    image: test",
             "features": ["kms"],
@@ -51,40 +93,133 @@ class TestDstackTDXVerifierInit:
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            verifier = DstackTDXVerifier(app_compose=app_compose)
+            verifier = DstackTDXVerifier(
+                app_compose=app_compose,
+                expected_bootchain=test_bootchain,
+                os_image_hash=test_os_image_hash,
+            )
 
             # Should not warn when app_compose is provided
             assert len(w) == 0
 
         assert verifier.app_compose == app_compose
+        assert verifier.expected_os_image_hash == test_os_image_hash
+        assert verifier.expected_bootchain is not None
 
-    def test_init_with_docker_compose_file(self):
-        """Test initialization with docker_compose_file."""
+    def test_init_with_custom_bootchain_and_os_image_hash(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test initialization with custom bootchain and os_image_hash."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
 
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            verifier = DstackTDXVerifier(docker_compose_file=docker_compose)
+            verifier = DstackTDXVerifier(
+                app_compose_docker_compose_file=docker_compose,
+                expected_bootchain=test_bootchain,
+                os_image_hash=test_os_image_hash,
+            )
 
             # Should not warn when docker_compose_file is provided
             assert len(w) == 0
 
         assert verifier.app_compose is not None
-        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        assert verifier.expected_os_image_hash == test_os_image_hash
+        assert verifier.expected_bootchain == test_bootchain
 
-    def test_init_with_both_app_compose_and_docker_compose_raises_error(self):
-        """Test that providing both app_compose and docker_compose_file raises ValueError."""
-        app_compose = {"docker_compose_file": "test"}
+    def test_init_with_app_compose_and_docker_compose_override(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that app_compose_docker_compose_file overrides app_compose's docker_compose_file."""
+        app_compose = {"docker_compose_file": "original", "features": ["custom"]}
         docker_compose = "version: '3'"
 
-        with pytest.raises(
-            ValueError,
-            match="You can only provide one of docker_compose_file or app_compose",
-        ):
-            DstackTDXVerifier(
-                app_compose=app_compose,
-                docker_compose_file=docker_compose,
-            )
+        verifier = DstackTDXVerifier(
+            app_compose=app_compose,
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # docker_compose_file should be overridden
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        # Other fields from app_compose should be preserved
+        assert verifier.app_compose["features"] == ["custom"]
+
+    def test_init_with_allowed_envs_override(self, test_os_image_hash, test_bootchain):
+        """Test that app_compose_allowed_envs overrides app_compose's allowed_envs."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        custom_envs = ["MY_VAR", "OTHER_VAR"]
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            app_compose_allowed_envs=custom_envs,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        assert verifier.app_compose["allowed_envs"] == custom_envs
+
+    def test_init_uses_default_app_compose_when_none_provided(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that default app_compose is used when none is provided."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Should use default app_compose settings
+        default = get_default_app_compose()
+        assert verifier.app_compose["features"] == default["features"]
+        assert verifier.app_compose["runner"] == default["runner"]
+        assert verifier.app_compose["gateway_enabled"] == default["gateway_enabled"]
+        # But docker_compose_file should be overridden
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+
+    def test_init_does_not_mutate_original_app_compose(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that original app_compose is not mutated."""
+        original_docker_compose = "original"
+        app_compose = {
+            "docker_compose_file": original_docker_compose,
+            "features": ["kms"],
+        }
+        override_docker_compose = "version: '3'"
+
+        verifier = DstackTDXVerifier(
+            app_compose=app_compose,
+            app_compose_docker_compose_file=override_docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Original should not be mutated
+        assert app_compose["docker_compose_file"] == original_docker_compose
+        # Verifier should have the override
+        assert verifier.app_compose["docker_compose_file"] == override_docker_compose
+
+    def test_init_with_both_overrides(self, test_os_image_hash, test_bootchain):
+        """Test initialization with both allowed_envs and docker_compose_file overrides."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        custom_envs = ["VAR1", "VAR2", "VAR3"]
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            app_compose_allowed_envs=custom_envs,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        assert verifier.app_compose["docker_compose_file"] == docker_compose
+        assert verifier.app_compose["allowed_envs"] == custom_envs
+        # Other defaults should remain
+        default = get_default_app_compose()
+        assert verifier.app_compose["features"] == default["features"]
 
     def test_init_with_valid_tcb_status(self):
         """Test initialization with valid allowed_tcb_status."""
@@ -152,11 +287,96 @@ class TestDstackTDXVerifierInit:
 
         assert verifier.collateral == "mocked_collateral"
 
-    def test_init_loads_default_collateral_when_none_provided(self):
-        """Test that default collateral is loaded when none is provided."""
+    def test_init_collateral_is_none_when_not_provided(self):
+        """Test that collateral is None when not provided (lazy loading)."""
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
-        # Collateral should be loaded from the local file
-        assert verifier.collateral is not None
+        # Collateral should be None for lazy loading from Intel servers
+        assert verifier.collateral is None
+
+    def test_init_cache_collateral_default_true(self):
+        """Test that cache_collateral defaults to True."""
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
+        assert verifier._cache_collateral is True
+
+    def test_init_cache_collateral_can_be_disabled(self):
+        """Test that cache_collateral can be set to False."""
+        verifier = DstackTDXVerifier(
+            disable_runtime_verification=True, cache_collateral=False
+        )
+        assert verifier._cache_collateral is False
+
+    def test_init_without_bootchain_raises_error(self):
+        """Test that init raises error when bootchain not provided."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        with pytest.raises(
+            ValueError,
+            match="You must provide both expected_bootchain and os_image_hash",
+        ):
+            DstackTDXVerifier(app_compose_docker_compose_file=docker_compose)
+
+    def test_init_with_only_os_image_hash_raises_error(self, test_os_image_hash):
+        """Test that providing only os_image_hash without bootchain raises error."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        with pytest.raises(
+            ValueError,
+            match="expected_bootchain and os_image_hash must be provided together",
+        ):
+            DstackTDXVerifier(
+                app_compose_docker_compose_file=docker_compose,
+                os_image_hash=test_os_image_hash,
+            )
+
+    def test_init_with_only_bootchain_raises_error(self, test_bootchain):
+        """Test that providing only expected_bootchain without os_image_hash raises error."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        with pytest.raises(
+            ValueError,
+            match="expected_bootchain and os_image_hash must be provided together",
+        ):
+            DstackTDXVerifier(
+                app_compose_docker_compose_file=docker_compose,
+                expected_bootchain=test_bootchain,
+            )
+
+    def test_init_with_incomplete_bootchain_raises_error(self, test_os_image_hash):
+        """Test that incomplete bootchain raises error."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        incomplete_bootchain = {"mrtd": "abc123"}  # Missing rtmr0, rtmr1, rtmr2
+
+        with pytest.raises(ValueError, match="expected_bootchain is missing required"):
+            DstackTDXVerifier(
+                app_compose_docker_compose_file=docker_compose,
+                expected_bootchain=incomplete_bootchain,
+                os_image_hash=test_os_image_hash,
+            )
+
+    def test_init_runtime_verification_disabled_sets_none_values(self):
+        """Test that disable_runtime_verification sets app_compose and os_image_hash to None."""
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            verifier = DstackTDXVerifier(disable_runtime_verification=True)
+
+        assert verifier.app_compose is None
+        assert verifier.expected_os_image_hash is None
+        assert verifier.expected_bootchain is None
+        assert verifier.is_runtime_verification_disabled() is True
+
+    def test_init_runtime_verification_enabled_by_default(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that runtime verification is enabled by default."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        assert verifier.is_runtime_verification_disabled() is False
 
 
 class TestDstackTDXVerifierGetAppComposeHash:
@@ -167,10 +387,16 @@ class TestDstackTDXVerifierGetAppComposeHash:
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
         assert verifier.get_app_compose_hash() is None
 
-    def test_get_app_compose_hash_returns_hash_when_app_compose_set(self):
+    def test_get_app_compose_hash_returns_hash_when_app_compose_set(
+        self, test_os_image_hash, test_bootchain
+    ):
         """Test that get_app_compose_hash returns a hash when app_compose is set."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
-        verifier = DstackTDXVerifier(docker_compose_file=docker_compose)
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
 
         hash_result = verifier.get_app_compose_hash()
 
@@ -179,16 +405,14 @@ class TestDstackTDXVerifierGetAppComposeHash:
         assert len(hash_result) == 64  # SHA-256 hex encoded
 
 
-class TestDefaultAppComposeFromDockerCompose:
-    """Tests for the default_app_compose_from_docker_compose function."""
+class TestGetDefaultAppCompose:
+    """Tests for the get_default_app_compose function."""
 
     def test_creates_valid_app_compose(self):
         """Test that function creates a valid app_compose structure."""
-        docker_compose = "version: '3'\nservices:\n  app:\n    image: test"
+        result = get_default_app_compose()
 
-        result = default_app_compose_from_docker_compose(docker_compose)
-
-        assert result["docker_compose_file"] == docker_compose
+        assert "docker_compose_file" in result
         assert "allowed_envs" in result
         assert "features" in result
         assert "runner" in result
@@ -196,18 +420,14 @@ class TestDefaultAppComposeFromDockerCompose:
 
     def test_includes_expected_features(self):
         """Test that the default app_compose includes expected features."""
-        docker_compose = "test compose content"
-
-        result = default_app_compose_from_docker_compose(docker_compose)
+        result = get_default_app_compose()
 
         assert "kms" in result["features"]
         assert "tproxy-net" in result["features"]
 
     def test_includes_expected_settings(self):
         """Test that the default app_compose includes expected settings."""
-        docker_compose = "test compose content"
-
-        result = default_app_compose_from_docker_compose(docker_compose)
+        result = get_default_app_compose()
 
         assert result["gateway_enabled"] is True
         assert result["kms_enabled"] is True
@@ -215,6 +435,12 @@ class TestDefaultAppComposeFromDockerCompose:
         assert result["public_logs"] is True
         assert result["public_sysinfo"] is True
         assert result["public_tcbinfo"] is True
+
+    def test_docker_compose_file_is_empty_by_default(self):
+        """Test that docker_compose_file is empty by default."""
+        result = get_default_app_compose()
+
+        assert result["docker_compose_file"] == ""
 
 
 class TestDstackTDXVerifierClassAttributes:
@@ -245,20 +471,10 @@ class TestDstackTDXVerifierClassAttributes:
 class TestCertHashFromEventlog:
     """Tests for the cert_hash_from_eventlog function."""
 
-    def _create_event_log(self, event: str, event_payload: str) -> EventLog:
-        """Helper to create EventLog with required fields."""
-        return EventLog(
-            imr=0,
-            event_type=0,
-            digest="0" * 64,
-            event=event,
-            event_payload=event_payload,
-        )
-
     def test_returns_none_when_no_cert_events(self):
         """Test that function returns None when no cert events exist."""
         event_log = [
-            self._create_event_log("other-event", "data"),
+            _create_event_log("other-event", "data"),
         ]
         result = cert_hash_from_eventlog(event_log)
         assert result is None
@@ -274,7 +490,7 @@ class TestCertHashFromEventlog:
         cert_hash = "test_hash"
         cert_hash_hex = cert_hash.encode().hex()
         event_log = [
-            self._create_event_log("New TLS Certificate", cert_hash_hex),
+            _create_event_log("New TLS Certificate", cert_hash_hex),
         ]
         result = cert_hash_from_eventlog(event_log)
         assert result == cert_hash
@@ -284,8 +500,8 @@ class TestCertHashFromEventlog:
         first_hash = "first_hash"
         last_hash = "last_hash"
         event_log = [
-            self._create_event_log("New TLS Certificate", first_hash.encode().hex()),
-            self._create_event_log("New TLS Certificate", last_hash.encode().hex()),
+            _create_event_log("New TLS Certificate", first_hash.encode().hex()),
+            _create_event_log("New TLS Certificate", last_hash.encode().hex()),
         ]
         result = cert_hash_from_eventlog(event_log)
         assert result == last_hash
@@ -294,20 +510,10 @@ class TestCertHashFromEventlog:
 class TestComposeHashFromEventlog:
     """Tests for the compose_hash_from_eventlog function."""
 
-    def _create_event_log(self, event: str, event_payload: str) -> EventLog:
-        """Helper to create EventLog with required fields."""
-        return EventLog(
-            imr=0,
-            event_type=0,
-            digest="0" * 64,
-            event=event,
-            event_payload=event_payload,
-        )
-
     def test_returns_none_when_no_compose_events(self):
         """Test that function returns None when no compose events exist."""
         event_log = [
-            self._create_event_log("other-event", "data"),
+            _create_event_log("other-event", "data"),
         ]
         result = compose_hash_from_eventlog(event_log)
         assert result is None
@@ -321,7 +527,7 @@ class TestComposeHashFromEventlog:
         """Test that function returns compose hash when event exists."""
         compose_hash = "abc123def456"
         event_log = [
-            self._create_event_log("compose-hash", compose_hash),
+            _create_event_log("compose-hash", compose_hash),
         ]
         result = compose_hash_from_eventlog(event_log)
         assert result == compose_hash
@@ -346,16 +552,6 @@ class TestDstackTDXVerifierGetQuote:
 class TestDstackTDXVerifierVerifyCertInEventlog:
     """Tests for DstackTDXVerifier.verify_cert_in_eventlog method."""
 
-    def _create_event_log(self, event: str, event_payload: str) -> EventLog:
-        """Helper to create EventLog with required fields."""
-        return EventLog(
-            imr=0,
-            event_type=0,
-            digest="0" * 64,
-            event=event,
-            event_payload=event_payload,
-        )
-
     def test_returns_false_when_no_certificate(self):
         """Test that function returns False when no certificate is received."""
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
@@ -375,9 +571,7 @@ class TestDstackTDXVerifierVerifyCertInEventlog:
 
         # Event log with a different hash
         event_log = [
-            self._create_event_log(
-                "New TLS Certificate", "different_hash".encode().hex()
-            ),
+            _create_event_log("New TLS Certificate", "different_hash".encode().hex()),
         ]
 
         result = verifier.verify_cert_in_eventlog(mock_ssl_sock, event_log)
@@ -387,40 +581,40 @@ class TestDstackTDXVerifierVerifyCertInEventlog:
 class TestDstackTDXVerifierVerifyAppCompose:
     """Tests for DstackTDXVerifier.verify_app_compose method."""
 
-    def _create_event_log(self, event: str, event_payload: str) -> EventLog:
-        """Helper to create EventLog with required fields."""
-        return EventLog(
-            imr=0,
-            event_type=0,
-            digest="0" * 64,
-            event=event,
-            event_payload=event_payload,
-        )
-
-    def test_returns_false_when_hash_mismatch_with_tcbinfo(self):
+    def test_returns_false_when_hash_mismatch_with_tcbinfo(
+        self, test_os_image_hash, test_bootchain
+    ):
         """Test that verify_app_compose returns False when hash doesn't match TCBInfo."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
-        verifier = DstackTDXVerifier(docker_compose_file=docker_compose)
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
 
         # Create an app_compose JSON that will have a different hash
-        # This needs to be a valid app_compose structure
-
-        different_app_compose = json.dumps(
-            default_app_compose_from_docker_compose("different_compose_content")
-        )
+        different_default = get_default_app_compose()
+        different_default["docker_compose_file"] = "different_compose_content"
+        different_app_compose = json.dumps(different_default)
         event_log = []
 
         result = verifier.verify_app_compose(different_app_compose, event_log)
         assert result is False
 
-    def test_returns_false_when_hash_mismatch_with_eventlog(self):
+    def test_returns_false_when_hash_mismatch_with_eventlog(
+        self, test_os_image_hash, test_bootchain
+    ):
         """Test that verify_app_compose returns False when hash doesn't match event log."""
         docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
-        verifier = DstackTDXVerifier(docker_compose_file=docker_compose)
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
 
         # Create an event log with a different hash
         event_log = [
-            self._create_event_log("compose-hash", "different_hash_value"),
+            _create_event_log("compose-hash", "different_hash_value"),
         ]
 
         # Use the same app_compose as the verifier so TCBInfo check passes
@@ -431,9 +625,7 @@ class TestDstackTDXVerifierVerifyAppCompose:
 
     def test_returns_true_when_no_app_compose_configured(self):
         """Test that verify_app_compose returns True when no app_compose configured."""
-        verifier = DstackTDXVerifier(
-            disable_runtime_verification=True
-        )  # No app_compose
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
 
         result = verifier.verify_app_compose("{}", [])
         assert result is True
@@ -499,28 +691,120 @@ class TestDstackTDXVerifierVerify:
                 result = verifier.verify(mock_ssl_sock)
                 assert result is False
 
-    def test_verify_raises_when_collateral_is_none(self):
-        """Test that verify raises RuntimeError when collateral is None."""
+    def test_verify_fetches_collateral_when_none(self):
+        """Test that verify fetches collateral from Intel servers when collateral is None."""
         verifier = DstackTDXVerifier(disable_runtime_verification=True)
-        verifier.collateral = None  # Force collateral to None
+        assert verifier.collateral is None  # Collateral is None by default
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
         mock_quote_response = Mock()
         mock_quote_response.decode_event_log.return_value = []
         mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = "00" * 64
         mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = "{}"
 
-        with patch.object(
-            DstackTDXVerifier,
-            "get_quote_from_tls_conn",
-            return_value=(mock_quote_response, mock_tcb_info),
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            '"report_data": "' + "00" * 64 + '"'
+            "}}}"
+        )
+
+        mock_collateral = Mock()
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=b"\x00" * 64
         ):
-            with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with pytest.raises(
-                    RuntimeError, match="Collateral are not properly set"
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    verifier.verify(mock_ssl_sock)
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=mock_collateral
+                    ) as mock_fetch:
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            result = verifier.verify(mock_ssl_sock)
+                            # Should have called _fetch_collateral
+                            mock_fetch.assert_called_once_with(b"fake_quote")
+                            # Should have cached the collateral
+                            assert verifier.collateral == mock_collateral
+                            assert result is True
+
+    def test_verify_does_not_cache_when_cache_collateral_false(self):
+        """Test that verify does not cache collateral when cache_collateral is False."""
+        verifier = DstackTDXVerifier(
+            disable_runtime_verification=True, cache_collateral=False
+        )
+        assert verifier.collateral is None
+        mock_ssl_sock = Mock()
+        mock_ssl_sock.server_hostname = "example.com"
+
+        mock_quote_response = Mock()
+        mock_quote_response.decode_event_log.return_value = []
+        mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = "00" * 64
+        mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = "{}"
+
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            '"report_data": "' + "00" * 64 + '"'
+            "}}}"
+        )
+
+        mock_collateral = Mock()
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=b"\x00" * 64
+        ):
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
+                ):
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=mock_collateral
+                    ) as mock_fetch:
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            result = verifier.verify(mock_ssl_sock)
+                            mock_fetch.assert_called_once()
+                            # Should NOT cache the collateral
+                            assert verifier.collateral is None
+                            assert result is True
 
     def test_verify_returns_false_when_tcb_status_not_allowed(self):
         """Test that verify returns False when TCB status is not in allowed list."""
@@ -546,14 +830,58 @@ class TestDstackTDXVerifierVerify:
             return_value=(mock_quote_response, mock_tcb_info),
         ):
             with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with patch(
-                    "secureai.verifiers.tdx.dcap_qvl.verify", return_value=mock_report
-                ):
-                    result = verifier.verify(mock_ssl_sock)
-                    assert result is False
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
 
-    def test_verify_returns_false_when_rtmr_mismatch(self):
-        """Test that verify returns False when RTMR values don't match."""
+    def test_verify_returns_false_when_bootchain_fails(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify returns False when bootchain verification fails."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            allowed_tcb_status=["UpToDate"],
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+        mock_ssl_sock = Mock()
+        mock_ssl_sock.server_hostname = "example.com"
+
+        mock_quote_response = Mock()
+        mock_quote_response.decode_event_log.return_value = []
+        mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_tcb_info = Mock()
+
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "wrong_mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3"'
+            "}}}"
+        )
+
+        with patch.object(
+            DstackTDXVerifier,
+            "get_quote_from_tls_conn",
+            return_value=(mock_quote_response, mock_tcb_info),
+        ):
+            with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
+
+    def test_verify_returns_false_when_rtmr_replay_mismatch(self):
+        """Test that verify returns False when RTMR replay values don't match."""
         verifier = DstackTDXVerifier(
             allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
         )
@@ -574,6 +902,7 @@ class TestDstackTDXVerifierVerify:
         mock_report = Mock()
         mock_report.to_json.return_value = (
             '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
             '"rt_mr0": "different0", "rt_mr1": "replayed1", '
             '"rt_mr2": "replayed2", "rt_mr3": "replayed3", '
             '"report_data": "7465737400000000000000000000000000000000000000000000000000000000"'
@@ -586,11 +915,13 @@ class TestDstackTDXVerifierVerify:
             return_value=(mock_quote_response, mock_tcb_info),
         ):
             with patch.object(verifier, "verify_cert_in_eventlog", return_value=True):
-                with patch(
-                    "secureai.verifiers.tdx.dcap_qvl.verify", return_value=mock_report
-                ):
-                    result = verifier.verify(mock_ssl_sock)
-                    assert result is False
+                with patch.object(verifier, "_fetch_collateral", return_value=Mock()):
+                    with patch(
+                        "secureai.verifiers.tdx.dcap_qvl.verify",
+                        return_value=mock_report,
+                    ):
+                        result = verifier.verify(mock_ssl_sock)
+                        assert result is False
 
     def test_verify_returns_false_when_report_data_mismatch(self):
         """Test that verify returns False when report_data doesn't match."""
@@ -600,8 +931,6 @@ class TestDstackTDXVerifierVerify:
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
-        # The report_data used in verify is generated via secrets.token_bytes(64)
-        # We need to mock it to control the value
         test_report_data = b"\x00" * 64
         test_report_data_hex = test_report_data.hex()
 
@@ -614,14 +943,13 @@ class TestDstackTDXVerifierVerify:
             2: "rtmr2",
             3: "rtmr3",
         }
-        # The quote response should match what was sent
         mock_quote_response.report_data = test_report_data_hex
         mock_tcb_info = Mock()
 
         mock_report = Mock()
-        # But the report from dcap_qvl has a different report_data
         mock_report.to_json.return_value = (
             '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
             '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
             '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
             '"report_data": "different_report_data"'
@@ -639,78 +967,30 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        result = verifier.verify(mock_ssl_sock)
-                        assert result is False
-
-    def test_verify_returns_false_when_app_compose_fails(self):
-        """Test that verify returns False when app compose verification fails."""
-        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
-        verifier = DstackTDXVerifier(
-            docker_compose_file=docker_compose, allowed_tcb_status=["UpToDate"]
-        )
-        mock_ssl_sock = Mock()
-        mock_ssl_sock.server_hostname = "example.com"
-
-        # Create test report_data
-        test_report_data = b"\x00" * 64
-        test_report_data_hex = test_report_data.hex()
-
-        mock_quote_response = Mock()
-        mock_quote_response.decode_event_log.return_value = []
-        mock_quote_response.decode_quote.return_value = b"fake_quote"
-        mock_quote_response.replay_rtmrs.return_value = {
-            0: "rtmr0",
-            1: "rtmr1",
-            2: "rtmr2",
-            3: "rtmr3",
-        }
-        mock_quote_response.report_data = test_report_data_hex
-        mock_tcb_info = Mock()
-        mock_tcb_info.app_compose = "{}"  # Different app compose
-
-        mock_report = Mock()
-        mock_report.to_json.return_value = (
-            '{"status": "UpToDate", "report": {"TD10": {'
-            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
-            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
-            f'"report_data": "{test_report_data_hex}"'
-            "}}}"
-        )
-
-        with patch(
-            "secureai.verifiers.tdx.secrets.token_bytes", return_value=test_report_data
-        ):
-            with patch.object(
-                DstackTDXVerifier,
-                "get_quote_from_tls_conn",
-                return_value=(mock_quote_response, mock_tcb_info),
-            ):
-                with patch.object(
-                    verifier, "verify_cert_in_eventlog", return_value=True
-                ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
-                    ):
-                        with patch.object(
-                            verifier, "verify_app_compose", return_value=False
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
                         ):
                             result = verifier.verify(mock_ssl_sock)
                             assert result is False
 
-    def test_verify_returns_true_on_success(self):
-        """Test that verify returns True when all checks pass."""
+    def test_verify_returns_false_when_app_compose_fails(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify returns False when app compose verification fails."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
         verifier = DstackTDXVerifier(
-            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+            app_compose_docker_compose_file=docker_compose,
+            allowed_tcb_status=["UpToDate"],
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
         )
         mock_ssl_sock = Mock()
         mock_ssl_sock.server_hostname = "example.com"
 
-        # Create test report_data
         test_report_data = b"\x00" * 64
         test_report_data_hex = test_report_data.hex()
 
@@ -730,6 +1010,7 @@ class TestDstackTDXVerifierVerify:
         mock_report = Mock()
         mock_report.to_json.return_value = (
             '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
             '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
             '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
             f'"report_data": "{test_report_data_hex}"'
@@ -747,12 +1028,336 @@ class TestDstackTDXVerifierVerify:
                 with patch.object(
                     verifier, "verify_cert_in_eventlog", return_value=True
                 ):
-                    with patch(
-                        "secureai.verifiers.tdx.dcap_qvl.verify",
-                        return_value=mock_report,
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
                     ):
-                        with patch.object(
-                            verifier, "verify_app_compose", return_value=True
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
                         ):
-                            result = verifier.verify(mock_ssl_sock)
-                            assert result is True
+                            with patch.object(
+                                verifier, "verify_bootchain", return_value=True
+                            ):
+                                with patch.object(
+                                    verifier, "verify_app_compose", return_value=False
+                                ):
+                                    result = verifier.verify(mock_ssl_sock)
+                                    assert result is False
+
+    def test_verify_returns_false_when_os_image_hash_fails(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify returns False when OS image hash verification fails."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            allowed_tcb_status=["UpToDate"],
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+        mock_ssl_sock = Mock()
+        mock_ssl_sock.server_hostname = "example.com"
+
+        test_report_data = b"\x00" * 64
+        test_report_data_hex = test_report_data.hex()
+
+        mock_quote_response = Mock()
+        mock_quote_response.decode_event_log.return_value = []
+        mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = test_report_data_hex
+        mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = json.dumps(verifier.app_compose)
+
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            f'"report_data": "{test_report_data_hex}"'
+            "}}}"
+        )
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=test_report_data
+        ):
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
+                ):
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
+                    ):
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            with patch.object(
+                                verifier, "verify_bootchain", return_value=True
+                            ):
+                                with patch.object(
+                                    verifier, "verify_app_compose", return_value=True
+                                ):
+                                    with patch.object(
+                                        verifier,
+                                        "verify_os_image_hash",
+                                        return_value=False,
+                                    ):
+                                        result = verifier.verify(mock_ssl_sock)
+                                        assert result is False
+
+    def test_verify_returns_true_on_success(self):
+        """Test that verify returns True when all checks pass."""
+        verifier = DstackTDXVerifier(
+            allowed_tcb_status=["UpToDate"], disable_runtime_verification=True
+        )
+        mock_ssl_sock = Mock()
+        mock_ssl_sock.server_hostname = "example.com"
+
+        test_report_data = b"\x00" * 64
+        test_report_data_hex = test_report_data.hex()
+
+        mock_quote_response = Mock()
+        mock_quote_response.decode_event_log.return_value = []
+        mock_quote_response.decode_quote.return_value = b"fake_quote"
+        mock_quote_response.replay_rtmrs.return_value = {
+            0: "rtmr0",
+            1: "rtmr1",
+            2: "rtmr2",
+            3: "rtmr3",
+        }
+        mock_quote_response.report_data = test_report_data_hex
+        mock_tcb_info = Mock()
+        mock_tcb_info.app_compose = "{}"
+
+        mock_report = Mock()
+        mock_report.to_json.return_value = (
+            '{"status": "UpToDate", "report": {"TD10": {'
+            '"mr_td": "mrtd", '
+            '"rt_mr0": "rtmr0", "rt_mr1": "rtmr1", '
+            '"rt_mr2": "rtmr2", "rt_mr3": "rtmr3", '
+            f'"report_data": "{test_report_data_hex}"'
+            "}}}"
+        )
+
+        with patch(
+            "secureai.verifiers.tdx.secrets.token_bytes", return_value=test_report_data
+        ):
+            with patch.object(
+                DstackTDXVerifier,
+                "get_quote_from_tls_conn",
+                return_value=(mock_quote_response, mock_tcb_info),
+            ):
+                with patch.object(
+                    verifier, "verify_cert_in_eventlog", return_value=True
+                ):
+                    with patch.object(
+                        verifier, "_fetch_collateral", return_value=Mock()
+                    ):
+                        with patch(
+                            "secureai.verifiers.tdx.dcap_qvl.verify",
+                            return_value=mock_report,
+                        ):
+                            with patch.object(
+                                verifier, "verify_bootchain", return_value=True
+                            ):
+                                with patch.object(
+                                    verifier, "verify_app_compose", return_value=True
+                                ):
+                                    with patch.object(
+                                        verifier,
+                                        "verify_os_image_hash",
+                                        return_value=True,
+                                    ):
+                                        result = verifier.verify(mock_ssl_sock)
+                                        assert result is True
+
+
+class TestOsImageHashFromEventlog:
+    """Tests for the os_image_hash_from_eventlog function."""
+
+    def test_returns_none_when_no_os_image_hash_events(self):
+        """Test that function returns None when no OS image hash events exist."""
+        event_log = [
+            _create_event_log("other-event", "data"),
+        ]
+        result = os_image_hash_from_eventlog(event_log)
+        assert result is None
+
+    def test_returns_none_with_empty_event_log(self):
+        """Test that function returns None with empty event log."""
+        result = os_image_hash_from_eventlog([])
+        assert result is None
+
+    def test_returns_os_image_hash_when_event_exists(self):
+        """Test that function returns OS image hash when event exists."""
+        os_hash = "86b181377635db21c415f9ece8cc8505f7d4936ad3be7043969005a8c4690c1a"
+        event_log = [
+            _create_event_log("os-image-hash", os_hash),
+        ]
+        result = os_image_hash_from_eventlog(event_log)
+        assert result == os_hash
+
+
+class TestDstackTDXVerifierBootchainVerification:
+    """Tests for bootchain verification in DstackTDXVerifier."""
+
+    def test_verify_bootchain_returns_true_when_disabled(self):
+        """Test that verify_bootchain returns True when runtime verification disabled."""
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
+        json_report = {"report": {"TD10": {"mr_td": "abc"}}}
+
+        result = verifier.verify_bootchain(json_report)
+        assert result is True
+
+    def test_verify_bootchain_returns_false_when_mrtd_mismatch(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_bootchain returns False when MRTD doesn't match."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        json_report = {
+            "report": {
+                "TD10": {
+                    "mr_td": "wrong_mrtd",
+                    "rt_mr0": verifier.expected_bootchain["rtmr0"],
+                    "rt_mr1": verifier.expected_bootchain["rtmr1"],
+                    "rt_mr2": verifier.expected_bootchain["rtmr2"],
+                },
+            }
+        }
+
+        result = verifier.verify_bootchain(json_report)
+        assert result is False
+
+    def test_verify_bootchain_returns_false_when_rtmr0_mismatch(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_bootchain returns False when RTMR0 doesn't match."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        json_report = {
+            "report": {
+                "TD10": {
+                    "mr_td": verifier.expected_bootchain["mrtd"],
+                    "rt_mr0": "wrong_rtmr0",
+                    "rt_mr1": verifier.expected_bootchain["rtmr1"],
+                    "rt_mr2": verifier.expected_bootchain["rtmr2"],
+                },
+            }
+        }
+
+        result = verifier.verify_bootchain(json_report)
+        assert result is False
+
+    def test_verify_bootchain_returns_true_when_all_match(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_bootchain returns True when all measurements match."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        json_report = {
+            "report": {
+                "TD10": {
+                    "mr_td": verifier.expected_bootchain["mrtd"],
+                    "rt_mr0": verifier.expected_bootchain["rtmr0"],
+                    "rt_mr1": verifier.expected_bootchain["rtmr1"],
+                    "rt_mr2": verifier.expected_bootchain["rtmr2"],
+                },
+            }
+        }
+
+        result = verifier.verify_bootchain(json_report)
+        assert result is True
+
+
+class TestDstackTDXVerifierOSImageVerification:
+    """Tests for OS image hash verification in DstackTDXVerifier."""
+
+    def test_verify_os_image_hash_returns_true_when_disabled(self):
+        """Test that verify_os_image_hash returns True when runtime verification disabled."""
+        verifier = DstackTDXVerifier(disable_runtime_verification=True)
+        event_log = []
+
+        result = verifier.verify_os_image_hash(event_log)
+        assert result is True
+
+    def test_verify_os_image_hash_returns_false_when_hash_not_in_eventlog(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_os_image_hash returns False when hash not in event log."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Empty event log - no OS image hash
+        event_log = []
+
+        result = verifier.verify_os_image_hash(event_log)
+        assert result is False
+
+    def test_verify_os_image_hash_returns_false_when_hash_mismatch(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_os_image_hash returns False when hash doesn't match."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Event log with different hash
+        event_log = [
+            _create_event_log("os-image-hash", "different_hash_value"),
+        ]
+
+        result = verifier.verify_os_image_hash(event_log)
+        assert result is False
+
+    def test_verify_os_image_hash_returns_true_when_hash_matches(
+        self, test_os_image_hash, test_bootchain
+    ):
+        """Test that verify_os_image_hash returns True when hash matches."""
+        docker_compose = "version: '3'\nservices:\n  web:\n    image: nginx"
+        verifier = DstackTDXVerifier(
+            app_compose_docker_compose_file=docker_compose,
+            expected_bootchain=test_bootchain,
+            os_image_hash=test_os_image_hash,
+        )
+
+        # Event log with matching hash
+        event_log = [
+            _create_event_log("os-image-hash", verifier.expected_os_image_hash),
+        ]
+
+        result = verifier.verify_os_image_hash(event_log)
+        assert result is True

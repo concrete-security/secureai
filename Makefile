@@ -1,9 +1,22 @@
 
+PYTEST_BASE_CMD = uv run pytest -v
+PYTEST_DEBUG_PREFIX = DEBUG_RATLS=true
+PYTEST_LOG_SUFFIX = -o log_cli=true
+PYTEST_COV_OPTIONS = --cov=secureai --cov-report=term-missing  --cov-fail-under=95
+
 test:
-	uv run pytest -v
+ifdef SHOW_LOGS
+	$(PYTEST_DEBUG_PREFIX) $(PYTEST_BASE_CMD) $(PYTEST_LOG_SUFFIX)
+else
+	$(PYTEST_BASE_CMD)
+endif
 
 test-coverage:
-	uv run pytest -v --cov=secureai --cov-report=term-missing  --cov-fail-under=95
+ifdef SHOW_LOGS
+	$(PYTEST_DEBUG_PREFIX) $(PYTEST_BASE_CMD) $(PYTEST_COV_OPTIONS) $(PYTEST_LOG_SUFFIX)
+else
+	$(PYTEST_BASE_CMD) $(PYTEST_COV_OPTIONS)
+endif
 
 format:
 	uv run ruff format
@@ -17,14 +30,8 @@ lint:
 check-lint:
 	uv run ruff check
 
-format-import-order:
-	uv run ruff check --select I --fix
+qa-all-fix: format lint
 
-check-import-order:
-	uv run ruff check --select I
+qa-all: check-format check-lint
 
-qa-all-fix: format lint format-import-order
-
-qa-all: check-format check-lint check-import-order
-
-.PHONY: test test-coverage format check-format lint check-lint format-import-order check-import-order qa-all-fix qa-all
+.PHONY: test test-coverage format check-format lint check-lint qa-all-fix qa-all
